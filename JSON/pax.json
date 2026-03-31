@@ -1,0 +1,25 @@
+{
+  "source": {
+    "sheet": "Sheet1",
+    "source_rows": [17, 32, 78, 84, 132, 159]
+  },
+  "dest": {
+    "sheet": "MZLZ Consolidated",
+    "dest_rows": [5, 7, 8, 9, 11, 10]
+  },
+  "description": "Pax",
+  "month_mappings": [
+    { "month": "January",   "source_column": "G",    "dest_column": "G"  },
+    { "month": "February",  "source_column": "H",    "dest_column": "W"  },
+    { "month": "March",     "source_column": "I",    "dest_column": "AM" },
+    { "month": "April",     "source_column": "J",    "dest_column": "BD" },
+    { "month": "May",       "source_column": "K",    "dest_column": "BW" },
+    { "month": "June",      "source_column": "L",    "dest_column": "CP" },
+    { "month": "July",      "source_column": "M",    "dest_column": "DJ" },
+    { "month": "August",    "source_column": "N",    "dest_column": "EF" },
+    { "month": "September", "source_column": "O",    "dest_column": "FB" },
+    { "month": "October",   "source_column": "P",    "dest_column": "FY" },
+    { "month": "November",  "source_column": "Q",    "dest_column": "GX" },
+    { "month": "December",  "source_column": "R",    "dest_column": "HW" }
+  ]
+}

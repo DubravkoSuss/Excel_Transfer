@@ -1,0 +1,69 @@
+#ifndef MAPPINGSManager_H
+#define MAPPINGSManager_H
+
+#include <QObject>
+#include <QString>
+#include <QStringList>
+#include <QMap>
+#include <QVector>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QFile>
+#include <QDir>
+
+struct MappingEntry {
+    QString month;
+    QString sourceSheetTemplate;
+    QString sourceColumn;
+    QVector<int> sourceRows;
+    QString destSheet;
+    QString destColumn;
+    QVector<int> destRows;
+};
+
+struct MonthMapping {
+    QString month;
+    QVector<MappingEntry> sources;
+};
+
+class MappingsManager : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit MappingsManager(QObject *parent = nullptr);
+    ~MappingsManager();
+
+    bool loadMappings(const QString& filePath);
+    bool saveMappings(const QString& filePath);
+    
+    QVector<MappingEntry> getMappingsForMonthYear(const QString& month, int year);
+    void addMapping(const QString& month, const MappingEntry& entry);
+    void removeMapping(const QString& month, int index);
+    void updateMapping(const QString& month, int index, const MappingEntry& entry);
+    
+    QStringList getAvailableMonths() const;
+    QStringList getSourceSheets() const;
+    QStringList getDestSheets() const;
+    
+    static const QStringList MONTHS_LIST;
+    static const QMap<QString, QString> MONTH_TO_NUM;
+    static const QMap<int, QList<int>> QUARTERS;
+
+    QString resolveSheetName(const QString& template_, int year);
+
+signals:
+    void mappingsLoaded(bool success, const QString& error);
+    void mappingsSaved(bool success, const QString& error);
+
+private:
+    QMap<QString, MonthMapping> m_mappings;
+    QString m_currentFilePath;
+    
+    bool parseJsonFile(const QString& filePath);
+    bool writeJsonFile(const QString& filePath);
+    QString cleanSheetName(const QString& sheetName) const;
+};
+
+#endif // MAPPINGSManager_H

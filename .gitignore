@@ -1,0 +1,37 @@
+# Build directories
+build/
+cmake-build-*/
+.idea/
+
+# Compiled files
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+
+# Qt generated files
+*_autogen/
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# Backup files
+*.bak
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Visual Studio / CLion
+.vs/
+*.user
+*.suo
+*.sln.docstates
+
+# Makefiles (generated)
+Makefile
+Makefile.Debug
+Makefile.Release
