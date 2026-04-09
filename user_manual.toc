@@ -1,0 +1,42 @@
+\contentsline {section}{\numberline {1}Overview}{2}{section.1}%
+\contentsline {section}{\numberline {2}Installation}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}System Requirements}{3}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Setup Steps}{3}{subsection.2.2}%
+\contentsline {section}{\numberline {3}Quick Start}{4}{section.3}%
+\contentsline {section}{\numberline {4}Loading Files}{4}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Selecting Periods}{4}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Loading Workbooks}{5}{subsection.4.2}%
+\contentsline {section}{\numberline {5}Mapping Cards}{6}{section.5}%
+\contentsline {subsection}{\numberline {5.1}What is a Mapping Card?}{6}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Data Source Types}{7}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Editing Row Mappings}{7}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}Select All / Deselect All}{7}{subsection.5.4}%
+\contentsline {section}{\numberline {6}Rolling Transfer (RT)}{8}{section.6}%
+\contentsline {subsection}{\numberline {6.1}What is Rolling Transfer?}{8}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}How RT Works}{8}{subsection.6.2}%
+\contentsline {section}{\numberline {7}Export Selected Months}{9}{section.7}%
+\contentsline {subsection}{\numberline {7.1}How It Works}{9}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Running the Export}{10}{subsection.7.2}%
+\contentsline {section}{\numberline {8}Execute All Transfers}{10}{section.8}%
+\contentsline {subsection}{\numberline {8.1}Running All Transfers}{10}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}Pause and Stop}{11}{subsection.8.2}%
+\contentsline {subsection}{\numberline {8.3}Performance Optimizations}{11}{subsection.8.3}%
+\contentsline {section}{\numberline {9}Saving and Finalization}{12}{section.9}%
+\contentsline {section}{\numberline {10}Troubleshooting}{12}{section.10}%
+\contentsline {subsection}{\numberline {10.1}Files Not Saving}{13}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}Empty Cells After Export}{13}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}Slow Loading Performance}{13}{subsection.10.3}%
+\contentsline {subsection}{\numberline {10.4}File Not Found}{14}{subsection.10.4}%
+\contentsline {subsection}{\numberline {10.5}Mapping Card Missing}{14}{subsection.10.5}%
+\contentsline {subsection}{\numberline {10.6}RT Validation Fails}{14}{subsection.10.6}%
+\contentsline {section}{\numberline {11}Frequently Asked Questions}{14}{section.11}%
+\contentsline {section}{\numberline {12}Appendix}{15}{section.12}%
+\contentsline {subsection}{\numberline {12.1}File Naming Convention}{15}{subsection.12.1}%
+\contentsline {subsection}{\numberline {12.2}Mapping JSON Structure}{16}{subsection.12.2}%
+\contentsline {subsubsection}{\numberline {12.2.1}Standard Mapping (mappings.json)}{16}{subsubsection.12.2.1}%
+\contentsline {subsubsection}{\numberline {12.2.2}PAX Mapping (pax.json)}{17}{subsubsection.12.2.2}%
+\contentsline {subsubsection}{\numberline {12.2.3}Staff Mapping (staff.json)}{17}{subsubsection.12.2.3}%
+\contentsline {subsection}{\numberline {12.3}Keyboard Shortcuts}{17}{subsection.12.3}%
+\contentsline {subsection}{\numberline {12.4}Technical Architecture}{18}{subsection.12.4}%
+\contentsline {subsection}{\numberline {12.5}Performance Characteristics}{18}{subsection.12.5}%
+\contentsline {subsection}{\numberline {12.6}Support}{18}{subsection.12.6}%

@@ -71,7 +71,8 @@ public:
     ~ExcelHandler();
 
     bool loadWorkbook(const QString& filePath, const QString& key,
-                      const QSet<QString>& sheetsNeeded = QSet<QString>());
+                      const QSet<QString>& sheetsNeeded = QSet<QString>(),
+                      QString* errorOut = nullptr);
     bool saveWorkbook(const QString& key, const QString& outputPath = QString());
     void unloadWorkbook(const QString& key);
     void unloadAll();          // Clears ALL cached workbooks from memory
@@ -81,6 +82,9 @@ public:
     // cached formula results on disk are correct when OpenXML reads them.
     // Returns true on success. Requires Excel installed on the machine.
     static bool recalcWithCOM(const QString& filePath, QString* errorOut = nullptr);
+    static bool repairAndSaveWithCOM(const QString& filePath, QString* errorOut = nullptr);
+    static bool silentRepairWithPowerShell(const QString& filePath, QString* errorOut = nullptr);
+    static bool validateWorkbookFile(const QString& filePath, QString* errorOut = nullptr);
     bool isLoaded(const QString& key);
     
     QStringList getSheetNames(const QString& key);
@@ -98,6 +102,10 @@ public:
     bool renameSheet(const QString& key, const QString& oldName, const QString& newName);
     void resetOverrides(const QString& key);
     void setInsertAfter(const QString& key, const QString& sheetName, const QString& insertAfter);
+    
+    // Apply row colors to a copied sheet (public wrapper)
+    bool applyRowColorsToSheet(const QString& key, const QString& sheetName, const QSet<int>& mappingRows);
+    QSet<int> buildMappingRowSet(const QString& mappingsPath, const QString& mappingsOldPath, const QString& targetSheetName);
     
     QString findCostControlFile(const QString& basePath, const QString& month, int year);
     QString findSAPFile(const QString& basePath, const QString& month, int year);
@@ -135,10 +143,47 @@ private:
     mutable QReadWriteLock m_lock;
     
     bool loadOpenXML(const QString& filePath, WorkbookData& wb,
-                     const QSet<QString>& sheetsNeeded = QSet<QString>());  // loads metadata + optional pre-parse
+                     const QSet<QString>& sheetsNeeded = QSet<QString>(),
+                     QString* errorOut = nullptr);  // loads metadata + optional pre-parse
     SheetData loadSheetLazy(const WorkbookData& wb, const QString& sheetName); // loads one sheet on demand
     bool saveOpenXML(const QString& filePath, const WorkbookData& wb);
     SheetData& getSheet(const QString& key, const QString& sheetName); // lazy accessor (write lock required)
+    
+    // ── Helper functions for enhanced copyFullSheet ──
+    QString resolveRelPath(const QString& basePath, const QString& relTarget);
+    QString generateUniqueTarget(WorkbookData& dst, const QString& baseDir, const QString& originalRelTarget);
+    void copySubRels(WorkbookData& src, WorkbookData& dst, const QString& srcAbsPath, const QString& dstAbsPath, QSet<QString>* visited = nullptr);
+    void mergeSharedStrings(WorkbookData& src, WorkbookData& dst, QByteArray& sheetXml);
+    struct MergeStylesResult {
+        int  xfOffsetLightBlue = 0;
+        int  xfOffsetDarkBlue  = 0;
+        int  srcXfCount        = 0;
+        bool valid             = false;
+    };
+    MergeStylesResult mergeStyles(WorkbookData& src, WorkbookData& dst);
+    void addContentType(WorkbookData& dst, const QString& partName, const QString& contentType);
+    QString addWorkbookSheet(WorkbookData& dst, const QString& sheetName, int sheetId);
+    void addWorkbookRel(WorkbookData& dst, const QString& rId, const QString& target);
+    void registerContentType(WorkbookData& dst, const QString& partPath, const QString& relType);
+    
+    // Style/string parsing helpers
+    QVector<QString> parseSharedStringTable(const QByteArray& sstXml);
+    QByteArray buildSharedStringTable(const QVector<QString>& strings);
+    QVector<QString> parseCellXfs(const QByteArray& stylesXml);
+    int appendStyleSection(WorkbookData& src, WorkbookData& dst, const QString& section, const QString& element);
+    QString remapXfIndices(const QString& xfEntry, int fontsOffset, int fillsOffset, int bordersOffset, int numFmtsOffset);
+    void rebuildStylesXml(WorkbookData& dst, const QVector<QString>& cellXfs);
+    
+    // ── Color application helpers ──
+    void applyRowColors(WorkbookData& dst, const QString& sheetPath,
+                        const QSet<int>& mappingRows,
+                        int xfOffsetLightBlue, int xfOffsetDarkBlue);
+    static int appendFill(QByteArray& stylesXml, const QString& fgColorRgb);
+    static int appendCellXf(QByteArray& stylesXml, int fontId, int fillId, int borderId);
+    
+    // ── Static helper for extracting/replacing style sections ──
+    static QByteArray extractStyleSection(const QByteArray& stylesXml, const QString& tagName, int& count);
+    static void replaceStyleSection(QByteArray& stylesXml, const QString& tagName, const QByteArray& newInnerXml, int newCount);
 };
 
 #endif // EXCELHANDLER_H

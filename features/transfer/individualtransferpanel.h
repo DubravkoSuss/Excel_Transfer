@@ -48,6 +48,7 @@ public:
     void updateSourceSheets(const QStringList& sheets);
     void updateDestSheets(const QStringList& sheets);
     QVector<MappingEntry> getMappingData() const;
+    void setMappingData(const QVector<MappingEntry>& data);
 
 signals:
     void browseSourceClicked();

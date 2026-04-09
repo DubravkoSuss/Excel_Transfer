@@ -28,11 +28,14 @@ struct MappingEntry {
     bool copyFullSheet = false;
     QString customSheetName;
     QString insertAfterSheet; // optional: insert copied sheet after this sheet
+    // User-selected rows to skip during transfer (dest row numbers)
+    QSet<int> ignoredDestRows;
+
     // Optional traffic mott additions for YTD
     QString trafficSourceSheet;
     QString trafficSourceColumn;
-    QVector<int> trafficSourceRows;
-    QVector<int> trafficDestRows;
+    QVector<int> trafficSourceRows;   // rows in TRAFFIC mott sheet (dest of traffic_mott mapping)
+    QMap<int,int> trafficPaxRowMap;   // destRow (MZLZ) → sourceRow (PAX Sheet1)
     QString trafficDestColumn;
 };
 

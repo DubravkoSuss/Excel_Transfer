@@ -37,21 +37,21 @@ bool MappingsManager::loadSapYtdMappings(const QString& filePath)
         entry.destColumn = obj["dest_column"].toString("JG");
         entry.sourceFileType = "sap_ytd";
 
-        // Optional traffic_mott additions
-        if (obj.contains("traffic_source") && obj["traffic_source"].isObject()) {
-            QJsonObject ts = obj["traffic_source"].toObject();
-            entry.trafficSourceSheet = ts["sheet"].toString("TRAFFIC mott 2025");
-            entry.trafficDestColumn = obj["dest_column2"].toString("JG");
+        // traffic_dest_rows: map of destRow (MZLZ) → sourceRow (PAX Sheet1 col Q)
+        if (obj.contains("traffic_dest_rows") && obj["traffic_dest_rows"].isObject()) {
+            entry.trafficSourceSheet  = "Sheet1";
+            entry.trafficDestColumn   = obj["dest_column2"].toString("JG");
             entry.trafficSourceColumn = obj["traffic_source_column"].toString("Q");
-            // source_rows is inside traffic_source object
-            for (const QJsonValue& rv : ts["source_rows"].toArray())
-                entry.trafficSourceRows.append(rv.toInt());
-            // traffic_dest_rows is at the TOP LEVEL of the JSON object (not inside traffic_source)
-            for (const QJsonValue& rv : obj["traffic_dest_rows"].toArray())
-                entry.trafficDestRows.append(rv.toInt());
-            qDebug() << "[SAP_YTD] loaded traffic rows for" << month
-                     << "srcRows=" << entry.trafficSourceRows
-                     << "destRows=" << entry.trafficDestRows;
+
+            QJsonObject destRowMap = obj["traffic_dest_rows"].toObject();
+            for (auto it = destRowMap.constBegin(); it != destRowMap.constEnd(); ++it) {
+                int destRow = it.key().toInt();
+                int srcRow  = it.value().toInt();
+                entry.trafficPaxRowMap[destRow] = srcRow;
+            }
+            qDebug() << "[SAP_YTD] loaded trafficPaxRowMap for" << month
+                     << "entries=" << entry.trafficPaxRowMap.size()
+                     << entry.trafficPaxRowMap;
         }
 
         QJsonObject rowMapObj = obj["rowMap"].toObject();
@@ -63,8 +63,16 @@ bool MappingsManager::loadSapYtdMappings(const QString& filePath)
             } else if (it.value().isArray()) {
                 for (const QJsonValue& sv : it.value().toArray())
                     srcRows.append(sv.toInt());
+            } else if (it.value().isObject()) {
+                // { "sum": [row1, row2, ...] } — sum multiple source rows
+                QJsonObject subObj = it.value().toObject();
+                if (subObj.contains("sum") && subObj["sum"].isArray()) {
+                    for (const QJsonValue& sv : subObj["sum"].toArray())
+                        srcRows.append(sv.toInt());
+                }
             }
-            entry.rowMap[destRow] = srcRows;
+            if (!srcRows.isEmpty())
+                entry.rowMap[destRow] = srcRows;
         }
 
         mm.sources.append(entry);

@@ -24,6 +24,11 @@ public:
     QString getMonth() const { return m_month; }
     int getYear() const { return m_year; }
     MappingEntry getMapping() const { return m_entry; }
+    void setIgnoredRows(const QSet<int>& rows) {
+        m_entry.ignoredDestRows = rows;
+    }
+    QSet<int> ignoredRows() const { return m_entry.ignoredDestRows; }
+    void setRowMap(const QMap<int, QVector<int>>& rowMap) { m_entry.rowMap = rowMap; }
 
     QString getSourceSheet() const;
     QString getSourceColumn() const;
@@ -57,6 +62,7 @@ signals:
     void editRowsClicked(int index);
     void exportRowMapClicked(int index);
     void importRowMapClicked(int index);
+    void ignoreRowsClicked(int index);
     void changed();
 
 private slots:

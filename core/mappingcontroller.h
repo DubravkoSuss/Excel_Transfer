@@ -41,6 +41,8 @@ public:
                            QVBoxLayout* pax,
                            QVBoxLayout* staff,
                            QVBoxLayout* sapYtd);
+    void updateEntryAt(int index, const MappingEntry& entry);
+    void syncRowToModel(int index);  // Sync widget state back to model
 
 signals:
     void requestRun(int index);
@@ -48,6 +50,7 @@ signals:
     void requestEditRows(int index);
     void requestExportRowMap(int index);
     void requestImportRowMap(int index);
+    void requestIgnoreRows(int index);
     void rowCountChanged(int count);
     void rowChanged(); // emitted when any row's checkbox/state changes
 

@@ -1,0 +1,27 @@
+[1/2] Cleaning additional files...
+[2/2] Cleaning all built files...
+FAILED: [code=1] clean 
+"C:\Users\dposavac\AppData\Local\Programs\CLion 2025.3.3\bin\ninja\win\x64\ninja.exe"  -t clean 
+Cleaning... ninja: error: remove(ExcelTransfer.exe): Access is denied.
+
+30 files.
+ninja: build stopped: subcommand failed.
+[1/33] Automatic MOC and UIC for target ExcelTransfer
+[2/33] Automatic RCC for resources.qrc
+[3/33] Building CXX object CMakeFiles/ExcelTransfer.dir/ExcelTransfer_autogen/mocs_compilation.cpp.obj
+FAILED: [code=1] CMakeFiles/ExcelTransfer.dir/ExcelTransfer_autogen/mocs_compilation.cpp.obj 
+C:\msys64\ucrt64\bin\c++.exe -DMINGW_HAS_SECURE_API=1 -DQT_AXCONTAINER_LIB -DQT_CONCURRENT_LIB -DQT_CORE_LIB -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -DWINVER=0x0A00 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN32_WINNT=0x0A00 -D_WIN64 -IC:/Users/dposavac/CLionProjects/Excel_transfer/cmake-build-debug/ExcelTransfer_autogen/include -isystem C:/msys64/ucrt64/include/qt6/QtCore -isystem C:/msys64/ucrt64/include/qt6 -isystem C:/msys64/ucrt64/share/qt6/mkspecs/win32-g++ -isystem C:/msys64/ucrt64/include/qt6/QtCore/6.10.1 -isystem C:/msys64/ucrt64/include/qt6/QtCore/6.10.1/QtCore -isystem C:/msys64/ucrt64/include/qt6/QtGui -isystem C:/msys64/ucrt64/include/qt6/QtWidgets -isystem C:/msys64/ucrt64/include/qt6/QtConcurrent -isystem C:/msys64/ucrt64/include/qt6/QtAxContainer -g -std=gnu++17 -fdiagnostics-color=always -MD -MT CMakeFiles/ExcelTransfer.dir/ExcelTransfer_autogen/mocs_compilation.cpp.obj -MF CMakeFiles\ExcelTransfer.dir\ExcelTransfer_autogen\mocs_compilation.cpp.obj.d -o CMakeFiles/ExcelTransfer.dir/ExcelTransfer_autogen/mocs_compilation.cpp.obj -c C:/Users/dposavac/CLionProjects/Excel_transfer/cmake-build-debug/ExcelTransfer_autogen/mocs_compilation.cpp
+C:/Users/dposavac/CLionProjects/Excel_transfer/cmake-build-debug/ExcelTransfer_autogen/mocs_compilation.cpp:7:10: fatal error: SBCFQOEMDT/moc_mappingpopup.cpp: No such file or directory
+    7 | #include "SBCFQOEMDT/moc_mappingpopup.cpp"
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+compilation terminated.
+[4/33] Building CXX object CMakeFiles/ExcelTransfer.dir/services/breaklinks.cpp.obj
+[5/33] Building CXX object CMakeFiles/ExcelTransfer.dir/core/mappingsmanager_sap_ytd.cpp.obj
+[6/33] Building CXX object CMakeFiles/ExcelTransfer.dir/ui/individualtransfertab.cpp.obj
+[7/33] Building CXX object CMakeFiles/ExcelTransfer.dir/services/transferservice.cpp.obj
+[8/33] Building CXX object CMakeFiles/ExcelTransfer.dir/ui/fillallmonthstab.cpp.obj
+[9/33] Building CXX object CMakeFiles/ExcelTransfer.dir/core/mappingsmanager.cpp.obj
+[10/33] Building CXX object CMakeFiles/ExcelTransfer.dir/services/excelhandler.cpp.obj
+[11/33] Building CXX object CMakeFiles/ExcelTransfer.dir/ui/main.cpp.obj
+[12/33] Building CXX object CMakeFiles/ExcelTransfer.dir/ui/mainwindow.cpp.obj
+ninja: build stopped: subcommand failed.

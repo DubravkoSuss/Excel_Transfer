@@ -10,6 +10,12 @@ struct FillAllFileEntry {
     QString sourceFilePath; // full path to source file (empty if not found)
     bool    found = false;  // true if file exists on disk
     QString statusMessage;  // "OK" or "File not found: ..."
+
+    // Copy full sheet fields (set from mapping card checkbox)
+    bool    copyFullSheet     = false;
+    QString customSheetName;
+    QString insertAfterSheet;
+    QString sourceSheetName;  // which sheet to copy from the source file
 };
 
 struct FillAllScanResult {

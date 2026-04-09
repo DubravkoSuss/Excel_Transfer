@@ -32,3 +32,20 @@ void MappingModel::setMappings(const QVector<MappingItem>& items)
     m_items = items;
     emit dataChanged();
 }
+
+void MappingModel::updateEntryAt(int index, const MappingEntry& entry)
+{
+    if (index >= 0 && index < m_items.size()) {
+        m_items[index].entry = entry;
+        // Emit fine-grained signal instead of dataChanged() to avoid full UI rebuild
+        emit entryUpdated(index);
+    }
+}
+
+MappingEntry MappingModel::entryAt(int index) const
+{
+    if (index >= 0 && index < m_items.size()) {
+        return m_items[index].entry;
+    }
+    return MappingEntry();  // Return empty entry if index out of range
+}

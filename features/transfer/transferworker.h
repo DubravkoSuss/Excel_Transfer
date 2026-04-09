@@ -7,13 +7,15 @@
 #include <QMutexLocker>
 #include <QElapsedTimer>
 #include <QSet>
+#include <algorithm>
 #include "../../services/transferservice.h"
 #include "../../services/excelhandler.h"
 #include "../../core/mappingsmanager.h"
+#include "../../core/crashguard.h"
 
 struct TransferMapping {
     MappingEntry entry;
-    int          year  = 0;
+    int          year = 0;
     QString      month;
     QString      destPath;
     int          rowIndex = -1; // index in UI list
@@ -61,191 +63,217 @@ public:
 
     void run() override
     {
-        qDebug() << "=== WORKER START ===";
-        // --- Phase 1: Pre-load all workbooks in parallel ---
-        ExcelHandler* handler = m_transferService ? m_transferService->handler() : nullptr;
-        if (handler) {
+        try {
+            qDebug() << "=== WORKER START ===";
+
+            ExcelHandler* handler = m_transferService ? m_transferService->handler() : nullptr;
+            if (!m_transferService || !handler) {
+                m_skipped.append("Transfer service or Excel handler is not initialized");
+                emit finished(m_totalCells, m_executed, m_skipped);
+                return;
+            }
+
+            // --- Phase 1: Pre-load all workbooks ---
             struct LoadTask { QString key; QString path; };
             QVector<LoadTask> tasks;
             QSet<QString> seen;
 
             auto addTask = [&](const QString& key, const QString& path) {
-                if (!path.isEmpty() && !seen.contains(key)) {
-                    seen.insert(key);
-                    if (!handler->isLoaded(key))
-                        tasks.append({key, path});
-                }
+                if (key.isEmpty() || path.isEmpty() || seen.contains(key))
+                    return;
+                seen.insert(key);
+                if (!handler->isLoaded(key))
+                    tasks.append({key, path});
             };
 
             for (const TransferMapping& tm : m_mappings) {
-                const QString& month = tm.entry.month;
-                int year = tm.year;
-                const QString& type = tm.entry.sourceFileType;
-
-                // Source file — must match the key used in transferEntry()/handleSapYtd()
-                if (type == "pax") {
-                    addTask(QString("%1_%2_pax").arg(month).arg(year),
-                            handler->findPaxFile(m_destFolder, month, year));
-                } else if (type == "pax_transfer" || type == "traffic_mott") {
-                    // These read from the PAX file (Sheet1) into cost_control
-                    addTask(QString("%1_%2_pax").arg(month).arg(year),
-                            handler->findPaxFile(m_destFolder, month, year));
-                } else if (type == "staff") {
-                    addTask(QString("%1_%2_staff").arg(month).arg(year),
-                            handler->findStaffFile(m_destFolder, year));
-                } else if (type == "sap_ytd") {
-                    addTask(QString("%1_%2_sap_ytd").arg(month).arg(year),
-                            handler->findSapYtdFile(m_destFolder, month, year));
-                    // sap_ytd entries may also read from the PAX/traffic file — pre-load it too
-                    if (!tm.entry.trafficSourceRows.isEmpty()) {
-                        addTask(QString("%1_%2_pax").arg(month).arg(year),
-                                handler->findPaxFile(m_destFolder, month, year));
-                    }
-                } else if (type == "sap") {
-                    addTask(QString("%1_%2_sap").arg(month).arg(year),
-                            handler->findSAPFile(m_destFolder, month, year));
-                } else {
-                    // cost_control or other — source is cost_control file
-                    addTask(QString("%1_%2_cost").arg(month).arg(year),
-                            handler->findCostControlFile(m_destFolder, month, year));
+                const QString month = tm.month.isEmpty() ? tm.entry.month : tm.month;
+                if (month.trimmed().isEmpty() || tm.year <= 0) {
+                    qWarning() << "TransferWorker: skipping invalid mapping period" << month << tm.year;
+                    continue;
                 }
 
-                // Destination (cost control) file
-                addTask(QString("%1_%2_cost_control").arg(month).arg(year),
+                const QString& type = tm.entry.sourceFileType;
+                const QString explicitSourcePath = tm.entry.sourcePath.trimmed();
+                auto sourcePath = [&](const QString& fallback) -> QString {
+                    return explicitSourcePath.isEmpty() ? fallback : explicitSourcePath;
+                };
+
+                if (type == "pax") {
+                    addTask(QString("%1_%2_pax").arg(month).arg(tm.year),
+                            sourcePath(handler->findPaxFile(m_destFolder, month, tm.year)));
+                } else if (type == "pax_transfer" || type == "traffic_mott") {
+                    addTask(QString("%1_%2_pax").arg(month).arg(tm.year),
+                            sourcePath(handler->findPaxFile(m_destFolder, month, tm.year)));
+                } else if (type == "staff") {
+                    addTask(QString("%1_%2_staff").arg(month).arg(tm.year),
+                            sourcePath(handler->findStaffFile(m_destFolder, tm.year)));
+                } else if (type == "sap_ytd") {
+                    addTask(QString("%1_%2_sap_ytd").arg(month).arg(tm.year),
+                            sourcePath(handler->findSapYtdFile(m_destFolder, month, tm.year)));
+                    if (!tm.entry.trafficSourceRows.isEmpty()) {
+                        addTask(QString("%1_%2_pax").arg(month).arg(tm.year),
+                                handler->findPaxFile(m_destFolder, month, tm.year));
+                    }
+                } else if (type == "sap") {
+                    addTask(QString("%1_%2_sap").arg(month).arg(tm.year),
+                            sourcePath(handler->findSAPFile(m_destFolder, month, tm.year)));
+                } else {
+                    addTask(QString("%1_%2_cost").arg(month).arg(tm.year),
+                            sourcePath(handler->findCostControlFile(m_destFolder, month, tm.year)));
+                }
+
+                addTask(QString("%1_%2_cost_control").arg(month).arg(tm.year),
                         tm.destPath.isEmpty()
-                            ? handler->findCostControlFile(m_destFolder, month, year)
+                            ? handler->findCostControlFile(m_destFolder, month, tm.year)
                             : tm.destPath);
             }
 
-            // Build needed sheets per file key — keys must match those used in transferEntry()
             QMap<QString, QSet<QString>> keyToSheets;
             for (const TransferMapping& tm : m_mappings) {
-                const QString& month = tm.entry.month;
-                const int year = tm.year;
-                const QString& type = tm.entry.sourceFileType;
+                const QString month = tm.month.isEmpty() ? tm.entry.month : tm.month;
+                if (month.trimmed().isEmpty() || tm.year <= 0)
+                    continue;
 
-                // Resolve the actual cache key for the source file (mirrors Phase 1 addTask logic)
+                const QString& type = tm.entry.sourceFileType;
                 QString srcKey;
                 if (type == "pax" || type == "pax_transfer" || type == "traffic_mott") {
-                    srcKey = QString("%1_%2_pax").arg(month).arg(year);
+                    srcKey = QString("%1_%2_pax").arg(month).arg(tm.year);
                 } else if (type == "staff") {
-                    srcKey = QString("%1_%2_staff").arg(month).arg(year);
+                    srcKey = QString("%1_%2_staff").arg(month).arg(tm.year);
                 } else if (type == "sap_ytd") {
-                    srcKey = QString("%1_%2_sap_ytd").arg(month).arg(year);
+                    srcKey = QString("%1_%2_sap_ytd").arg(month).arg(tm.year);
                 } else if (type == "sap") {
-                    srcKey = QString("%1_%2_sap").arg(month).arg(year);
+                    srcKey = QString("%1_%2_sap").arg(month).arg(tm.year);
                 } else {
-                    srcKey = QString("%1_%2_cost").arg(month).arg(year);
+                    srcKey = QString("%1_%2_cost").arg(month).arg(tm.year);
                 }
 
-                QString destKey = QString("%1_%2_cost_control").arg(month).arg(year);
+                const QString destKey = QString("%1_%2_cost_control").arg(month).arg(tm.year);
                 if (!tm.entry.sourceSheetTemplate.isEmpty())
                     keyToSheets[srcKey].insert(tm.entry.sourceSheetTemplate);
                 if (!tm.entry.destSheet.isEmpty())
                     keyToSheets[destKey].insert(tm.entry.destSheet);
             }
 
-            // Load sequentially — parallel loading of large xlsm files causes OOM crashes
             emit progress(0, m_mappings.size(), QString("Pre-loading %1 workbooks...").arg(tasks.size()));
             for (const LoadTask& task : tasks) {
-                if (isStopRequested()) break;
-                handler->loadWorkbook(task.path, task.key, keyToSheets.value(task.key));
-            }
-        }
-
-        // --- Phase 1b: Sort mappings so writes happen in correct dependency order ---
-        // Order: traffic_mott → pax → pax_transfer → staff → sap → cost_control → ytd → sap_ytd (last)
-        // copyFullSheet (SAP monthly sheet) must be absolute last within sap_ytd group
-        auto typeOrder = [](const QString& type, bool copyFull) -> int {
-            if (type == "traffic_mott")  return 0;
-            if (type == "pax")           return 1;
-            if (type == "pax_transfer")  return 2;
-            if (type == "staff")         return 3;
-            if (type == "sap")           return 4;
-            if (type == "ytd")           return 5;
-            if (type == "sap_ytd" && !copyFull) return 6;
-            if (type == "sap_ytd" && copyFull)  return 7; // SAP monthly sheet copy is very last
-            return 5; // cost_control and others in the middle
-        };
-        std::stable_sort(m_mappings.begin(), m_mappings.end(),
-            [&typeOrder](const TransferMapping& a, const TransferMapping& b) {
-                // First sort by month/year (keep same-period entries grouped)
-                if (a.entry.month != b.entry.month) return false;
-                if (a.year != b.year) return false;
-                // Within same period: sort by type dependency order
-                return typeOrder(a.entry.sourceFileType, a.entry.copyFullSheet)
-                     < typeOrder(b.entry.sourceFileType, b.entry.copyFullSheet);
-            });
-
-        // --- Phase 2: Transfer sequentially (writes must be serial per file) ---
-        int total = m_mappings.size();
-
-        // Track destination workbooks to save once at the end
-        QMap<QString, QString> destMap; // destKey -> destPath
-        QSet<QString> comSaved;         // destKey saved by COM
-        for (const TransferMapping& tm : m_mappings) {
-            const QString month = tm.month.isEmpty() ? tm.entry.month : tm.month;
-            QString destKey = QString("%1_%2_cost_control").arg(month).arg(tm.year);
-            destMap[destKey] = tm.destPath;
-        }
-
-        for (int i = 0; i < total; ++i) {
-            if (isStopRequested()) break;
-
-            // Apply pause only at a safe boundary: after the previous mapping/sheet finished
-            // and before starting the next one.
-            while (isPauseRequested()) {
-                QThread::msleep(100);
-                if (isStopRequested()) break;
+                if (isStopRequested())
+                    break;
+                QString loadError;
+                if (!handler->loadWorkbook(task.path, task.key, keyToSheets.value(task.key), &loadError)) {
+                    qWarning() << "TransferWorker: preload failed for" << task.key << task.path
+                               << ":" << loadError;
+                }
             }
 
-            if (isStopRequested()) break;
+            // --- Phase 1b: Sort mappings in deterministic dependency order ---
+            auto typeOrder = [](const QString& type, bool copyFull) -> int {
+                if (type == "traffic_mott") return 0;
+                if (type == "pax") return 1;
+                if (type == "pax_transfer") return 2;
+                if (type == "staff") return 3;
+                if (type == "sap") return 4;
+                if (type == "ytd") return 5;
+                if (type == "sap_ytd" && !copyFull) return 6;
+                if (type == "sap_ytd" && copyFull) return 7;
+                return 5;
+            };
+            auto monthOrder = [](const QString& month) -> int {
+                const QString mm = ExcelHandler::MONTH_TO_NUM.value(month, QString());
+                bool ok = false;
+                const int idx = mm.toInt(&ok);
+                return ok ? idx : 99;
+            };
+            std::stable_sort(m_mappings.begin(), m_mappings.end(),
+                [&typeOrder, &monthOrder](const TransferMapping& a, const TransferMapping& b) {
+                    if (a.year != b.year)
+                        return a.year < b.year;
+                    const QString aMonth = a.month.isEmpty() ? a.entry.month : a.month;
+                    const QString bMonth = b.month.isEmpty() ? b.entry.month : b.month;
+                    const int aMonthIdx = monthOrder(aMonth);
+                    const int bMonthIdx = monthOrder(bMonth);
+                    if (aMonthIdx != bMonthIdx)
+                        return aMonthIdx < bMonthIdx;
+                    return typeOrder(a.entry.sourceFileType, a.entry.copyFullSheet)
+                         < typeOrder(b.entry.sourceFileType, b.entry.copyFullSheet);
+                });
 
-            const TransferMapping& tm = m_mappings[i];
-
-            emit progress(i + 1, total,
-                          QString("Transferring %1/%2: %3 %4")
-                              .arg(i + 1).arg(total).arg(tm.month).arg(tm.year));
-
-            QElapsedTimer timer;
-            timer.start();
-            qDebug() << "TRANSFER START" << (i + 1) << "/" << total << tm.month << tm.year;
-            qDebug() << "--- TRANSFER" << (i+1) << "/" << total << tm.month << tm.year << "START ---";
-            int cells = doTransfer(tm);
-            qDebug() << "TRANSFER END" << (i + 1) << "/" << total << "cells" << cells
-                     << "elapsed" << timer.elapsed() << "ms";
-            qDebug() << "--- TRANSFER" << (i+1) << "/" << total << "DONE cells=" << cells << "---";
-
-            if (cells > 0) {
-                m_executed++;
-                m_totalCells += cells;
+            // --- Phase 2: Transfer sequentially ---
+            const int total = m_mappings.size();
+            QMap<QString, QString> destMap; // destKey -> destPath
+            for (const TransferMapping& tm : m_mappings) {
+                const QString month = tm.month.isEmpty() ? tm.entry.month : tm.month;
+                if (month.trimmed().isEmpty() || tm.year <= 0)
+                    continue;
+                const QString destKey = QString("%1_%2_cost_control").arg(month).arg(tm.year);
+                destMap[destKey] = tm.destPath;
             }
 
-            emit rowDone(tm.rowIndex, cells > 0, cells > 0 ? QString("%1 cells").arg(cells) : "Failed");
-        }
+            for (int i = 0; i < total; ++i) {
+                if (isStopRequested())
+                    break;
 
-        // Save all destination workbooks once at the end via OpenXML (no COM)
-        qDebug() << "=== ALL TRANSFERS DONE, STARTING SAVES ===";
-        qDebug() << "TransferWorker: starting save phase," << destMap.size() << "workbooks";
-        if (m_transferService) {
-            ExcelHandler* handler = m_transferService->handler();
+                while (isPauseRequested()) {
+                    QThread::msleep(100);
+                    if (isStopRequested())
+                        break;
+                }
+                if (isStopRequested())
+                    break;
+
+                const TransferMapping& tm = m_mappings[i];
+                const QString month = tm.month.isEmpty() ? tm.entry.month : tm.month;
+
+                emit progress(i + 1, total,
+                              QString("Transferring %1/%2: %3 %4")
+                                  .arg(i + 1).arg(total).arg(month).arg(tm.year));
+
+                QElapsedTimer timer;
+                timer.start();
+                qDebug() << "TRANSFER START" << (i + 1) << "/" << total << month << tm.year;
+                qDebug() << "--- TRANSFER" << (i + 1) << "/" << total << month << tm.year << "START ---";
+                const int cells = doTransfer(tm);
+                qDebug() << "TRANSFER END" << (i + 1) << "/" << total << "cells" << cells
+                         << "elapsed" << timer.elapsed() << "ms";
+                qDebug() << "--- TRANSFER" << (i + 1) << "/" << total << "DONE cells=" << cells << "---";
+
+                if (cells > 0) {
+                    m_executed++;
+                    m_totalCells += cells;
+                }
+
+                const bool success = (cells > 0);
+                QString rowMessage = success ? QString("%1 cells").arg(cells) : "Failed";
+                if (!success && !m_lastResult.error.isEmpty())
+                    rowMessage = m_lastResult.error;
+                emit rowDone(tm.rowIndex, success, rowMessage);
+            }
+
+            // Save all destination workbooks once at the end via OpenXML.
+            qDebug() << "=== ALL TRANSFERS DONE, STARTING SAVES ===";
+            qDebug() << "TransferWorker: starting save phase," << destMap.size() << "workbooks";
             int saveIdx = 0;
             for (auto it = destMap.constBegin(); it != destMap.constEnd(); ++it) {
                 ++saveIdx;
                 qDebug() << "TransferWorker: saving" << saveIdx << "/" << destMap.size()
                          << it.key() << "->" << it.value();
-                bool ok = handler->saveWorkbook(it.key(), it.value());
+                const bool ok = handler->saveWorkbook(it.key(), it.value());
                 qDebug() << "TransferWorker: save" << (ok ? "OK" : "FAILED") << it.key();
-                if (!ok) {
+                if (!ok)
                     qWarning() << "TransferWorker: save failed for" << it.key() << it.value();
-                }
             }
-        }
-        qDebug() << "TransferWorker: save phase complete";
+            qDebug() << "TransferWorker: save phase complete";
 
-        qDebug() << "=== WORKER ABOUT TO EMIT FINISHED ===";
-        emit finished(m_totalCells, m_executed, m_skipped);
-        qDebug() << "=== WORKER EMIT DONE ===";
+            qDebug() << "=== WORKER ABOUT TO EMIT FINISHED ===";
+            emit finished(m_totalCells, m_executed, m_skipped);
+            qDebug() << "=== WORKER EMIT DONE ===";
+        } catch (...) {
+            const QString error = CrashGuard::format("TransferWorker::run");
+            qCritical() << "[CRASH_GUARD]" << error;
+            m_skipped.append(error);
+            emit finished(m_totalCells, m_executed, m_skipped);
+        }
     }
 
 signals:
@@ -256,38 +284,67 @@ signals:
 private:
     int doTransfer(const TransferMapping& tm)
     {
-        if (!m_transferService) {
-            m_skipped.append(QString("%1 %2").arg(tm.month).arg(tm.year));
-            return 0;
-        }
+        try {
+            m_lastResult = TransferService::Result{};
 
-        QString destPath = tm.destPath.isEmpty() ? m_destFolder : tm.destPath;
-        // Use tm.month (from MappingItem) not tm.entry.month (can be empty for budget/refi entries)
-        const QString month = tm.month.isEmpty() ? tm.entry.month : tm.month;
-        // All transfers write into cost_control workbooks (pax files are only sources)
-        QString destKey = QString("%1_%2_cost_control").arg(month).arg(tm.year);
-
-        // Load the destination workbook if not already loaded
-        ExcelHandler* handler = m_transferService->handler();
-        if (handler && !handler->isLoaded(destKey)) {
-            if (!handler->loadWorkbook(destPath, destKey)) {
-                qWarning() << "TransferWorker: failed to load destination workbook:" << destPath;
+            if (!m_transferService) {
+                m_lastResult.error = "Transfer service unavailable";
                 m_skipped.append(QString("%1 %2").arg(tm.month).arg(tm.year));
                 return 0;
             }
-        }
 
-        m_lastResult = m_transferService->transferEntry(
-            tm.entry,
-            tm.year,
-            destKey,
-            destPath,
-            m_destFolder
-        );
-        if (m_lastResult.cellsTransferred == 0) {
-            m_skipped.append(QString("%1 %2").arg(tm.month).arg(tm.year));
+            const QString month = tm.month.isEmpty() ? tm.entry.month : tm.month;
+            if (month.trimmed().isEmpty() || tm.year <= 0) {
+                m_lastResult.error = "Invalid transfer period";
+                m_skipped.append(QString("%1 %2").arg(month).arg(tm.year));
+                return 0;
+            }
+
+            QString destPath = tm.destPath.isEmpty() ? m_destFolder : tm.destPath;
+            if (destPath.trimmed().isEmpty()) {
+                m_lastResult.error = "Destination path is empty";
+                m_skipped.append(QString("%1 %2").arg(month).arg(tm.year));
+                return 0;
+            }
+
+            const QString destKey = QString("%1_%2_cost_control").arg(month).arg(tm.year);
+
+            ExcelHandler* handler = m_transferService->handler();
+            if (!handler) {
+                m_lastResult.error = "Excel handler unavailable";
+                m_skipped.append(QString("%1 %2").arg(month).arg(tm.year));
+                return 0;
+            }
+
+            if (!handler->isLoaded(destKey)) {
+                QString loadError;
+                if (!handler->loadWorkbook(destPath, destKey, {}, &loadError)) {
+                    if (loadError.isEmpty())
+                        loadError = "unknown workbook load error";
+                    m_lastResult.error = QString("Failed to load destination workbook: %1 (%2)")
+                                             .arg(destPath, loadError);
+                    qWarning() << "TransferWorker:" << m_lastResult.error;
+                    m_skipped.append(QString("%1 %2").arg(month).arg(tm.year));
+                    return 0;
+                }
+            }
+
+            m_lastResult = m_transferService->transferEntry(
+                tm.entry,
+                tm.year,
+                destKey,
+                destPath,
+                m_destFolder
+            );
+            if (m_lastResult.cellsTransferred == 0)
+                m_skipped.append(QString("%1 %2").arg(month).arg(tm.year));
+            return m_lastResult.cellsTransferred;
+        } catch (...) {
+            m_lastResult.error = CrashGuard::format("TransferWorker::doTransfer");
+            qWarning() << "[CRASH_GUARD]" << m_lastResult.error;
+            m_skipped.append(m_lastResult.error);
+            return 0;
         }
-        return m_lastResult.cellsTransferred;
     }
 
     QVector<TransferMapping> m_mappings;

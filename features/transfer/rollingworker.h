@@ -2,6 +2,7 @@
 #include <QThread>
 #include <QMap>
 #include "rollingtransferservice.h"
+#include "../../core/crashguard.h"
 
 class RollingWorker : public QThread
 {
@@ -18,7 +19,16 @@ public:
         , m_allEntriesByMonth(allEntriesByMonth) {}
 
     void run() override {
-        RollingResult result = m_service->executeChain(m_steps, m_destFolder, m_jsonBase, m_allEntriesByMonth);
+        RollingResult result;
+        try {
+            if (!m_service) {
+                result.errors.append("Rolling transfer service is null.");
+            } else {
+                result = m_service->executeChain(m_steps, m_destFolder, m_jsonBase, m_allEntriesByMonth);
+            }
+        } catch (...) {
+            result.errors.append(CrashGuard::format("RollingWorker::run"));
+        }
         emit finished(result);
     }
 

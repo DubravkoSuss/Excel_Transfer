@@ -65,11 +65,19 @@ void ToastWidget::showToast(const QString& message, ToastType type, int duration
     m_messageLabel->setText(message);
     setToastStyle(type);
 
-    // Calculate position (bottom center of screen)
-    QRect screenGeometry = QApplication::primaryScreen()->availableGeometry();
-    int x = (screenGeometry.width() - width()) / 2;
-    int y = screenGeometry.height() - height() - 50;
-    move(x, y);
+    // Position at bottom-center of the parent window.
+    // If no parent, fall back to center-bottom of primary screen.
+    if (parentWidget()) {
+        QPoint parentPos = parentWidget()->mapToGlobal(QPoint(0, 0));
+        QSize  parentSize = parentWidget()->size();
+        int x = parentPos.x() + (parentSize.width()  - width())  / 2;
+        int y = parentPos.y() +  parentSize.height()  - height() - 30;
+        move(x, y);
+    } else {
+        QRect sg = QApplication::primaryScreen()->availableGeometry();
+        move(sg.left() + (sg.width() - width()) / 2,
+             sg.top()  +  sg.height() - height() - 50);
+    }
 
     // Show and fade in
     show();

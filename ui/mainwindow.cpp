@@ -1,4 +1,5 @@
-﻿#include "../core/mappingsmanager.h"
+#include "../core/mappingsmanager.h"
+#include "../core/mappingcontroller.h"
 #include "mainwindow.h"
 #include "../features/mappings/rowmapvalidatordialog.h"
 #include "../features/periods/periodrow.h"
@@ -7,22 +8,39 @@
 #include "../core/periodmodel.h"
 #include "../features/mappings/mappingrow.h"
 #include "../features/transfer/individualtransferpanel.h"
+#include "sheetcellselectordialog.h"
+#include "ignorerowsdialog.h"
 #include "../features/transfer/transferworker.h"
 #include "../features/transfer/loadworker.h"
 #include "../features/transfer/rollingworker.h"
 #include "../features/transfer/rollingtransferservice.h"
 #include "individualtransfertab.h"
 #include "fillallmonthstab.h"
+#include "hybridtransfertab.h"
+#include "customtabbar.h"
+#include "../features/transfer/fillallworker.h"
+#include "../features/transfer/hybridworker.h"
 #include <QRegularExpression>
 #include <QDebug>
 #include <QDateTime>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QCoreApplication>
 #include <QDir>
 #include <QInputDialog>
 #include <QHeaderView>
+#include <QSettings>
 #include <QProgressDialog>
 #include <QTimer>
+#include <QScreen>
+#include <QSplitter>
+#include <QGuiApplication>
+#include <QMessageBox>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <dwmapi.h>
+#endif
 
 const QString MainWindow::PASSWORD = "finance2026";
 const QString MainWindow::DEFAULT_SOURCE_FOLDER = "L:/Cost control/Cost Control/Cost control";
@@ -33,6 +51,75 @@ const QMap<int, QList<int>> MainWindow::QUARTERS = {{1, {0, 1, 2}}, {2, {3, 4, 5
 MainWindow* MainWindow::s_instance = nullptr;
 const QVector<int> MainWindow::YEAR_RANGE = {2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034, 2035, 2036, 2037, 2038, 2039, 2040, 2041, 2042, 2043};
 
+namespace {
+bool promptForValidWorkbook(QWidget* parent,
+                            const QString& usageLabel,
+                            QString& filePath)
+{
+    while (true) {
+        QString validationError;
+        if (ExcelHandler::validateWorkbookFile(filePath, &validationError)) {
+            return true;
+        }
+
+        QMessageBox box(parent);
+        box.setIcon(QMessageBox::Warning);
+        box.setWindowTitle("Invalid Excel File");
+        box.setText(
+            QString("%1\n\nFile:\n%2\n\nProblem:\n%3")
+                .arg(usageLabel, filePath, validationError));
+        box.setInformativeText("Choose a replacement .xlsx/.xlsm file or cancel execution.");
+
+        QPushButton* browseBtn = box.addButton("Browse Replacement...", QMessageBox::AcceptRole);
+        box.addButton(QMessageBox::Cancel);
+        box.exec();
+
+        if (box.clickedButton() != browseBtn) {
+            return false;
+        }
+
+        const QString replacement = QFileDialog::getOpenFileName(
+            parent,
+            "Select Replacement Excel File",
+            QFileInfo(filePath).absolutePath(),
+            "Excel Files (*.xlsx *.xlsm *.xls);;All Files (*)");
+
+        if (replacement.isEmpty()) {
+            return false;
+        }
+        filePath = replacement;
+    }
+}
+
+bool resolveWorkbookPath(QWidget* parent,
+                         const QString& usageLabel,
+                         const QString& originalPath,
+                         QMap<QString, QString>& resolvedMap,
+                         QString* resolvedOut)
+{
+    if (originalPath.isEmpty()) {
+        if (resolvedOut) resolvedOut->clear();
+        return true;
+    }
+
+    if (resolvedMap.contains(originalPath)) {
+        if (resolvedOut) *resolvedOut = resolvedMap.value(originalPath);
+        return true;
+    }
+
+    QString resolved = originalPath;
+    if (QFile::exists(resolved)) {
+        if (!promptForValidWorkbook(parent, usageLabel, resolved)) {
+            return false;
+        }
+    }
+
+    resolvedMap.insert(originalPath, resolved);
+    if (resolvedOut) *resolvedOut = resolved;
+    return true;
+}
+} // namespace
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_isTransferRunning(false)
@@ -41,7 +128,42 @@ MainWindow::MainWindow(QWidget *parent)
     , m_transferSuccessfulMappings(0)
 {
     s_instance = this;
+
+    // Initialize debounce timer for generatePeriodRows — shared across all year cards
+    m_generatePeriodTimer = new QTimer(this);
+    m_generatePeriodTimer->setSingleShot(true);
+    m_generatePeriodTimer->setInterval(200); // 200ms settle time
+    connect(m_generatePeriodTimer, &QTimer::timeout, this, [this]() {
+        if (m_periodController) m_periodController->generatePeriodRows();
+    });
+
+    // Safety-net timeout: if a background operation runs > 10 minutes, force-reset busy flags
+    m_busyTimeout = new QTimer(this);
+    m_busyTimeout->setSingleShot(true);
+    connect(m_busyTimeout, &QTimer::timeout, this, [this]() {
+        if (isBusy()) {
+            qWarning() << "[GUARD] TIMEOUT — operation exceeded 10 minutes, force-resetting busy flags";
+            m_isTransferRunning  = false;
+            m_isLoadingPeriods   = false;
+            m_isLoadingRT        = false;
+            m_fillAllRunning     = false;
+            statusBar()->showMessage("⚠ Operation timed out — UI unlocked", 6000);
+        }
+    });
+
     setupUI();
+
+    // Center window on primary monitor
+    QScreen* screen = QGuiApplication::primaryScreen();
+    if (screen) {
+        QRect sg = screen->availableGeometry();
+        move(sg.center() - rect().center());
+    }
+    
+    // Customize Windows title bar color
+#ifdef Q_OS_WIN
+    customizeWindowsTitleBar();
+#endif
 
     m_mappingModel = new MappingModel(this);
     m_mappingController = new MappingController(m_mappingModel, m_centralWidget, m_costControlLayout, this);
@@ -67,6 +189,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_mappingController, &MappingController::requestEditRows,     this, &MainWindow::onMappingEditRowsClicked);
     connect(m_mappingController, &MappingController::requestExportRowMap, this, &MainWindow::onExportRowMapClicked);
     connect(m_mappingController, &MappingController::requestImportRowMap, this, &MainWindow::onImportRowMapClicked);
+    connect(m_mappingController, &MappingController::requestIgnoreRows, this, &MainWindow::onIgnoreRows);
     connect(m_mappingController, &MappingController::rowCountChanged, this, [this](int) {
         updateExecuteAllButton();
     });
@@ -93,11 +216,35 @@ MainWindow::~MainWindow()
 {
 }
 
+#ifdef Q_OS_WIN
+void MainWindow::customizeWindowsTitleBar()
+{
+    // Get the window handle
+    HWND hwnd = (HWND)winId();
+    
+    // Set light mode for title bar
+    BOOL useDarkMode = FALSE;
+    DwmSetWindowAttribute(hwnd, 20, &useDarkMode, sizeof(useDarkMode)); // DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+    
+    // Set title bar color to match main window background (light grey #F3F4F6)
+    // Convert hex color to COLORREF (BGR format)
+    COLORREF titleBarColor = RGB(0xF6, 0xF4, 0xF3); // BGR: 0xF3F4F6
+    DwmSetWindowAttribute(hwnd, 35, &titleBarColor, sizeof(titleBarColor)); // DWMWA_CAPTION_COLOR = 35
+    
+    // Set title text color to dark grey/black
+    COLORREF textColor = RGB(0x1F, 0x29, 0x37); // Dark grey for readability
+    DwmSetWindowAttribute(hwnd, 36, &textColor, sizeof(textColor)); // DWMWA_TEXT_COLOR = 36
+    
+    // Set border color to match background (removes black edge)
+    COLORREF borderColor = RGB(0xF6, 0xF4, 0xF3); // Same as title bar
+    DwmSetWindowAttribute(hwnd, 34, &borderColor, sizeof(borderColor)); // DWMWA_BORDER_COLOR = 34
+}
+#endif
 
 void MainWindow::setupUI()
 {
     setWindowTitle("Excel Transfer Tool - Monthly Auto");
-    resize(1100, 850);
+    resize(1300, 950);
     setMinimumSize(950, 620);
 
     QScrollArea* mainScroll = new QScrollArea();
@@ -114,9 +261,12 @@ void MainWindow::setupUI()
 
     createHeader();
     
-    // Create tab widget for main content
-    m_tabWidget = new QTabWidget();
+    // Create tab widget for main content with custom tab bar
+    m_tabWidget = new CustomTabWidget();
     m_mainLayout->addWidget(m_tabWidget);
+    
+    // Connect to tab moved signal to save order
+    connect(m_tabWidget->tabBar(), &QTabBar::tabMoved, this, &MainWindow::onTabMoved);
     
     // Create main transfer tab
     QWidget* mainTransferTab = new QWidget();
@@ -134,21 +284,113 @@ void MainWindow::setupUI()
     
     createMonthYearSelector();
     createFileInfoCard();
-    createMappingsCard();
+    createMappingsCard();  // Creates sidebar but doesn't add it yet
     
-    // Move widgets from main layout to tab layout
+    // Create modern Windows 11-style toggle button for sidebar
+    m_btnToggleMappings = new QPushButton();
+    m_btnToggleMappings->setStyleSheet(
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #FFFFFF, stop:1 #F5F5F5);"
+        "  border: 1px solid #E0E0E0;"
+        "  border-radius: 4px;"
+        "  padding: 6px;"
+        "  min-width: 32px;"
+        "  min-height: 32px;"
+        "  max-width: 32px;"
+        "  max-height: 32px;"
+        "}"
+        "QPushButton:hover {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #F0F0F0, stop:1 #E8E8E8);"
+        "  border: 1px solid #D0D0D0;"
+        "}"
+        "QPushButton:pressed {"
+        "  background: #E0E0E0;"
+        "  border: 1px solid #C0C0C0;"
+        "}"
+    );
+    
+
+    m_btnToggleMappings->setText("🔀");
+    m_btnToggleMappings->setFont(QFont("Segoe UI", 8));  //  Reduced from 16 to 12
+    m_btnToggleMappings->setToolTip("Hide mappings sidebar");
+    m_btnToggleMappings->setCursor(Qt::PointingHandCursor);
+    
+    connect(m_btnToggleMappings, &QPushButton::clicked, this, [this]() {
+        bool isVisible = m_mappingsSidebar->isVisible();
+        m_mappingsSidebar->setVisible(!isVisible);
+        
+        // Update button appearance
+        if (isVisible) {
+            // Sidebar is now hidden - show arrow pointing right
+            m_btnToggleMappings->setText("⏩");
+            m_btnToggleMappings->setToolTip("Show mappings sidebar");
+        } else {
+            // Sidebar is now visible - show hamburger menu
+            m_btnToggleMappings->setText("⏪");
+            m_btnToggleMappings->setToolTip("Hide mappings sidebar");
+        }
+    });
+    
+    // Create main content area (will be on the right side)
+    QWidget* mainContentArea = new QWidget();
+    QVBoxLayout* mainContentLayout = new QVBoxLayout(mainContentArea);
+    mainContentLayout->setContentsMargins(0, 0, 0, 0);
+    mainContentLayout->setSpacing(0);
+    
+    // Use splitter to make top/bottom sections resizable by drag.
+    m_mainSectionsSplitter = new QSplitter(Qt::Vertical);
+    m_mainSectionsSplitter->setChildrenCollapsible(false);
+    m_mainSectionsSplitter->setHandleWidth(8);
+    
+    // Move month/year selector and file info to main content splitter
     while (m_mainLayout->count() > 2) { // Keep header and tab widget
         QLayoutItem* item = m_mainLayout->takeAt(2);
         if (item->widget()) {
-            tempLayout->addWidget(item->widget());
+            m_mainSectionsSplitter->addWidget(item->widget());
         }
         delete item;
     }
+    
+    // Set initial sizes - give more space to month/year selector
+    QList<int> sizes;
+    sizes << 350 << 150;  // MonthYearSelector, FileInfo
+    m_mainSectionsSplitter->setSizes(sizes);
+    
+    mainContentLayout->addWidget(m_mainSectionsSplitter);
+    
+    // Create container for toggle button + main content
+    QWidget* rightSideContainer = new QWidget();
+    QHBoxLayout* rightSideLayout = new QHBoxLayout(rightSideContainer);
+    rightSideLayout->setContentsMargins(8, 16, 0, 0);  // Reduced top margin to 16px (closer to cards)
+    rightSideLayout->setSpacing(8);
+    rightSideLayout->addWidget(m_btnToggleMappings, 0, Qt::AlignTop);  // Align to top
+    rightSideLayout->addWidget(mainContentArea);
+    
+    // Create horizontal splitter: sidebar on left, main content on right
+    m_horizontalSplitter = new QSplitter(Qt::Horizontal);
+    m_horizontalSplitter->setChildrenCollapsible(false);
+    m_horizontalSplitter->setHandleWidth(1);
+    m_horizontalSplitter->addWidget(m_mappingsSidebar);     // Left: mappings sidebar
+    m_horizontalSplitter->addWidget(rightSideContainer);    // Right: toggle button + main content
+    
+    // Set initial sizes: 350px for sidebar, rest for main content
+    m_horizontalSplitter->setStretchFactor(0, 0);  // Sidebar: fixed-ish
+    m_horizontalSplitter->setStretchFactor(1, 1);  // Main content: stretches
+    QList<int> hSizes;
+    hSizes << 350 << 950;
+    m_horizontalSplitter->setSizes(hSizes);
+    
+    tempLayout->addWidget(m_horizontalSplitter);
     
     mainTransferLayout->addWidget(tempContainer);
     
     // Create Fill All tab
     createFillAllTab();
+    
+    // Create Hybrid Transfer tab
+    createHybridTab();
     
     // Create Individual Transfer tab
     createIndividualTab();
@@ -174,13 +416,84 @@ void MainWindow::setupUI()
     m_statusDock->setWidget(m_statusText);
     addDockWidget(Qt::RightDockWidgetArea, m_statusDock);
     m_statusDock->setVisible(false);
+    
+    // Restore saved tab order
+    restoreTabOrder();
+}
+
+void MainWindow::saveTabOrder()
+{
+    QSettings settings("ExcelTransfer", "TabOrder");
+    QStringList tabOrder;
+    
+    for (int i = 0; i < m_tabWidget->count(); i++) {
+        tabOrder.append(m_tabWidget->tabText(i));
+    }
+    
+    settings.setValue("order", tabOrder);
+    qInfo() << "[TabOrder] Saved:" << tabOrder;
+}
+
+void MainWindow::restoreTabOrder()
+{
+    QSettings settings("ExcelTransfer", "TabOrder");
+    QStringList savedOrder = settings.value("order").toStringList();
+    
+    if (savedOrder.isEmpty()) {
+        qInfo() << "[TabOrder] No saved order found, using default";
+        return;
+    }
+    
+    qInfo() << "[TabOrder] Restoring:" << savedOrder;
+    
+    // Create a map of tab text to index
+    QMap<QString, int> tabIndices;
+    for (int i = 0; i < m_tabWidget->count(); i++) {
+        tabIndices[m_tabWidget->tabText(i)] = i;
+    }
+    
+    // Reorder tabs based on saved order
+    for (int targetPos = 0; targetPos < savedOrder.size(); targetPos++) {
+        QString tabName = savedOrder[targetPos];
+        
+        if (!tabIndices.contains(tabName)) {
+            continue; // Tab doesn't exist anymore
+        }
+        
+        // Find current position of this tab
+        int currentPos = -1;
+        for (int i = 0; i < m_tabWidget->count(); i++) {
+            if (m_tabWidget->tabText(i) == tabName) {
+                currentPos = i;
+                break;
+            }
+        }
+        
+        // Move tab to target position
+        if (currentPos != -1 && currentPos != targetPos) {
+            m_tabWidget->tabBar()->moveTab(currentPos, targetPos);
+        }
+    }
+}
+
+void MainWindow::onTabMoved(int from, int to)
+{
+    Q_UNUSED(from);
+    Q_UNUSED(to);
+    saveTabOrder();
 }
 
 void MainWindow::createHeader()
 {
     m_headerFrame = new QFrame();
     m_headerFrame->setObjectName("headerFrame");
-    m_headerFrame->setStyleSheet("#headerFrame { background: #0F1B3A; }");
+    m_headerFrame->setStyleSheet(
+        "#headerFrame { "
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #0F1B3A, stop:0.85 #0F1B3A, stop:1 rgba(15, 27, 58, 0));"
+        "  border: none;"
+        "}"
+    );
 
     QHBoxLayout* headerLayout = new QHBoxLayout(m_headerFrame);
     headerLayout->setContentsMargins(20, 20, 20, 20);
@@ -235,15 +548,8 @@ void MainWindow::createHeader()
     connect(m_btnRollingTransfer, &QPushButton::clicked, this, &MainWindow::onRollingTransfer);
     headerLayout->addWidget(m_btnRollingTransfer);
 
-    m_btnExportSelectedMonths = new QPushButton("Export Selected Months");
-    m_btnExportSelectedMonths->setStyleSheet(
-        "background: #0D9488; color: white; font-weight: 600; "
-        "padding: 10px 20px; border-radius: 6px;");
-    connect(m_btnExportSelectedMonths, &QPushButton::clicked,
-            this, &MainWindow::onExportSelectedMonths);
-    headerLayout->addWidget(m_btnExportSelectedMonths);
 
-    // Reset button  ? clears everything back to a fresh state
+    // Reset button clears everything back to a fresh state
     QPushButton* btnReset = new QPushButton("Reset");
     btnReset->setStyleSheet(
         "QPushButton { background: #1E3A5F; color: #A0B1D0; font-weight: 600; "
@@ -254,55 +560,130 @@ void MainWindow::createHeader()
     connect(btnReset, &QPushButton::clicked, this, &MainWindow::onResetAll);
     headerLayout->addWidget(btnReset);
 
+    // Log toggle button — shows/hides the status log side panel
+    m_btnToggleLog = new QPushButton("Log");
+    m_btnToggleLog->setCheckable(true);
+    m_btnToggleLog->setChecked(false);
+    m_btnToggleLog->setStyleSheet(
+        "QPushButton { background: #1E3A5F; color: #A0B1D0; font-weight: 600; "
+        "padding: 10px 14px; border-radius: 6px; border: 1px solid #2D4E7A; }"
+        "QPushButton:checked { background: #2D4E7A; color: white; border-color: #4B7FC4; }"
+        "QPushButton:hover { background: #2D4E7A; color: white; }"
+    );
+    m_btnToggleLog->setToolTip("Show/hide the status log panel");
+    connect(m_btnToggleLog, &QPushButton::toggled, this, [this](bool checked) {
+        if (m_statusDock) m_statusDock->setVisible(checked);
+    });
+    headerLayout->addWidget(m_btnToggleLog);
+
     m_mainLayout->addWidget(m_headerFrame);
 }
 
 void MainWindow::createMonthYearSelector()
 {
+    // Premium design card
     QFrame* selectorCard = new QFrame();
-    selectorCard->setStyleSheet("background: white; border-radius: 10px;");
+    selectorCard->setStyleSheet(
+        "QFrame {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #FAFBFC, stop:1 #F5F7FA);"
+        "  border-radius: 12px;"
+        "  border: none;"
+        "}"
+    );
+    selectorCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     QVBoxLayout* selectorLayout = new QVBoxLayout(selectorCard);
-    selectorLayout->setContentsMargins(16, 16, 16, 16);
-    selectorLayout->setSpacing(10);
+    selectorLayout->setContentsMargins(20, 20, 20, 20);
+    selectorLayout->setSpacing(6);
 
+    // Premium title styling
     QLabel* title = new QLabel("Select Years & Months");
-    title->setStyleSheet("font-weight: 1000; font-size: 15px; color: #1E3A5F;");
+    title->setStyleSheet(
+        "font-weight: 700; "
+        "font-size: 16px; "
+        "color: #1A1F36; "
+        "letter-spacing: -0.3px;"
+    );
     selectorLayout->addWidget(title);
 
-    QLabel* hint = new QLabel("Check a year to expand  ? then select months or use Q1 ?Q4 buttons in each year");
-    hint->setStyleSheet("font-size: 11px; color: #6B7280;");
+    // Premium hint styling
+    QLabel* hint = new QLabel("Check a year to expand then select months or use Q1 Q4 buttons in each year");
+    hint->setStyleSheet(
+        "font-size: 11px; "
+        "color: #8B92A7; "
+        "margin-bottom: 4px;"
+    );
     selectorLayout->addWidget(hint);
 
+    // Premium years group box - no border for cleaner look
     QGroupBox* yearsGroup = new QGroupBox();
     yearsGroup->setStyleSheet(
-        "QGroupBox { border: 1px solid #E5E7EB; border-radius: 8px; margin-top: 4px; padding-top: 4px; }"
+        "QGroupBox {"
+        "  border: none;"
+        "  background: transparent;"
+        "  margin-top: 0px;"
+        "  padding-top: 0px;"
+        "}"
     );
     QVBoxLayout* yearsMainLayout = new QVBoxLayout(yearsGroup);
-    yearsMainLayout->setSpacing(4);
+    yearsMainLayout->setSpacing(2);
+    yearsMainLayout->setContentsMargins(0, 0, 0, 0);
 
     // Create a scrollable area for years
     QScrollArea* yearsScroll = new QScrollArea();
     yearsScroll->setWidgetResizable(true);
     yearsScroll->setFrameShape(QFrame::NoFrame);
-    yearsScroll->setMaximumHeight(400);
+    yearsScroll->setStyleSheet(
+        "QScrollArea {"
+        "  background: transparent;"
+        "  border: none;"
+        "}"
+        "QScrollBar:vertical {"
+        "  background: transparent;"
+        "  width: 10px;"
+        "  border-radius: 5px;"
+        "}"
+        "QScrollBar::handle:vertical {"
+        "  background: rgba(0, 0, 0, 0.15);"
+        "  border-radius: 5px;"
+        "  min-height: 30px;"
+        "}"
+        "QScrollBar::handle:vertical:hover {"
+        "  background: rgba(0, 0, 0, 0.25);"
+        "}"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+        "  height: 0px;"
+        "}"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+        "  background: transparent;"
+        "}"
+    );
     
     QWidget* yearsContainer = new QWidget();
+    yearsContainer->setStyleSheet("background: transparent;");
     QVBoxLayout* yearsContainerLayout = new QVBoxLayout(yearsContainer);
     yearsContainerLayout->setSpacing(2);
     yearsContainerLayout->setContentsMargins(0, 0, 0, 0);
 
     for (int year : YEAR_RANGE) {
-        // Use YearCard  ? a proper QWidget that owns all its children safely
+        // Use YearCard a proper QWidget that owns all its children safely
         YearCard* card = new YearCard(year, yearsContainer);
 
-        // Wire year checkbox � period controller
+        // Wire year checkbox period controller
+        // Use a debounce timer so generatePeriodRows() only fires once
+        // even if multiple year checkboxes are toggled in rapid succession
         connect(card, &YearCard::yearChecked, this, [this](int yr, bool checked) {
             if (m_periodController) {
                 m_periodController->onYearToggled(yr, checked);
-                if (checked) m_periodController->generatePeriodRows();
+                if (checked && m_generatePeriodTimer)
+                    m_generatePeriodTimer->start();
             }
         });
+
+        // Wire create month files mode
+        connect(card, &YearCard::createMonthFilesRequested,
+                this, &MainWindow::onCreateMonthFilesMode);
 
         // Store a dummy QCheckBox pointer for compatibility with existing
         // code that calls m_yearCheckboxes[year]->setChecked(...)
@@ -317,45 +698,80 @@ void MainWindow::createMonthYearSelector()
     
     yearsScroll->setWidget(yearsContainer);
     yearsMainLayout->addWidget(yearsScroll);
-    selectorLayout->addWidget(yearsGroup);
 
-    // �� Period rows area (populated by displayPeriodRows when LOAD is clicked) �
-    // m_monthYearSelector is the container widget; m_monthYearLayout is its layout.
-    // clearPeriodRows() and displayPeriodRows() both use these.
-    m_monthYearSelector = new QWidget(selectorCard);
-    m_monthYearLayout   = new QVBoxLayout(m_monthYearSelector);
-    m_monthYearLayout->setContentsMargins(0, 4, 0, 0);
-    m_monthYearLayout->setSpacing(6);
-    m_monthYearLayout->addStretch(); // keeps widgets pinned to top
-    selectorLayout->addWidget(m_monthYearSelector);
-
-    // All action buttons in one compact row  ? addStretch() keeps them left-aligned and natural width
+    // Add buttons inside the years group (so they move with the splitter)
     QHBoxLayout* actionBtnLayout = new QHBoxLayout();
     actionBtnLayout->setSpacing(8);
-    actionBtnLayout->setContentsMargins(0, 4, 0, 0);
+    actionBtnLayout->setContentsMargins(8, 8, 8, 8);
 
+    // Premium button styles with gradients and shadows
     static const QString loadStyle =
-        "QPushButton { background: #7C3AED; color: white; font-weight: 600; "
-        "  padding: 7px 16px; border-radius: 6px; font-size: 12px; }"
-        "QPushButton:hover { background: #6D28D9; }";
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #8B5CF6, stop:1 #7C3AED);"
+        "  color: white;"
+        "  font-weight: 600;"
+        "  padding: 8px 18px;"
+        "  border-radius: 8px;"
+        "  font-size: 12px;"
+        "  border: none;"
+        "}"
+        "QPushButton:hover {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #7C3AED, stop:1 #6D28D9);"
+        "}"
+        "QPushButton:pressed {"
+        "  background: #6D28D9;"
+        "}";
+    
     static const QString rtStyle =
-        "QPushButton { background: #B45309; color: white; font-weight: 600; "
-        "  padding: 7px 16px; border-radius: 6px; font-size: 12px; }"
-        "QPushButton:hover { background: #92400E; }";
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #D97706, stop:1 #B45309);"
+        "  color: white;"
+        "  font-weight: 600;"
+        "  padding: 8px 18px;"
+        "  border-radius: 8px;"
+        "  font-size: 12px;"
+        "  border: none;"
+        "}"
+        "QPushButton:hover {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #B45309, stop:1 #92400E);"
+        "}"
+        "QPushButton:pressed {"
+        "  background: #92400E;"
+        "}";
+    
     static const QString clearStyle =
-        "QPushButton { background: #FEF2F2; color: #DC2626; font-weight: 600; "
-        "  padding: 7px 14px; border-radius: 6px; font-size: 12px; border: 1px solid #FECACA; }"
-        "QPushButton:hover { background: #FEE2E2; }";
+        "QPushButton {"
+        "  background: rgba(254, 242, 242, 0.8);"
+        "  color: #DC2626;"
+        "  font-weight: 600;"
+        "  padding: 8px 16px;"
+        "  border-radius: 8px;"
+        "  font-size: 12px;"
+        "  border: 1px solid #FECACA;"
+        "}"
+        "QPushButton:hover {"
+        "  background: #FEE2E2;"
+        "  border: 1px solid #FCA5A5;"
+        "}"
+        "QPushButton:pressed {"
+        "  background: #FECACA;"
+        "}";
 
     m_btnLoad = new QPushButton("Load Periods");
     m_btnLoad->setStyleSheet(loadStyle);
     m_btnLoad->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_btnLoad->setCursor(Qt::PointingHandCursor);
     connect(m_btnLoad, &QPushButton::clicked, this, &MainWindow::onLoadSelectedPeriods);
     actionBtnLayout->addWidget(m_btnLoad);
 
     m_btnLoadRT = new QPushButton("Load RT");
     m_btnLoadRT->setStyleSheet(rtStyle);
     m_btnLoadRT->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_btnLoadRT->setCursor(Qt::PointingHandCursor);
     m_btnLoadRT->setToolTip("Rolling Transfer");
     connect(m_btnLoadRT, &QPushButton::clicked, this, &MainWindow::onLoadRT);
     actionBtnLayout->addWidget(m_btnLoadRT);
@@ -363,20 +779,45 @@ void MainWindow::createMonthYearSelector()
     m_btnClear = new QPushButton("Clear");
     m_btnClear->setStyleSheet(clearStyle);
     m_btnClear->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_btnClear->setCursor(Qt::PointingHandCursor);
     m_btnClear->setToolTip("Clear all period rows and month selections");
     connect(m_btnClear, &QPushButton::clicked, this, &MainWindow::onClearPeriodRows);
     actionBtnLayout->addWidget(m_btnClear);
 
     actionBtnLayout->addStretch(); // keeps buttons left-aligned at natural width
-    selectorLayout->addLayout(actionBtnLayout);
+    yearsMainLayout->addLayout(actionBtnLayout);
+
+    // �� Period rows area (populated by displayPeriodRows when LOAD is clicked) �
+    // m_monthYearSelector is the container widget; m_monthYearLayout is its layout.
+    // clearPeriodRows() and displayPeriodRows() both use these.
+    m_monthYearSelector = new QWidget();
+    m_monthYearSelector->setStyleSheet("background: transparent;");
+    m_monthYearLayout   = new QVBoxLayout(m_monthYearSelector);
+    m_monthYearLayout->setContentsMargins(0, 0, 0, 0);
+    m_monthYearLayout->setSpacing(4);
+    m_monthYearLayout->addStretch(); // keeps widgets pinned to top
+    yearsGroup->setMinimumHeight(250);
+    m_monthYearSelector->setMinimumHeight(220);
+
+    m_selectorSectionsSplitter = new QSplitter(Qt::Vertical, selectorCard);
+    m_selectorSectionsSplitter->setChildrenCollapsible(false);
+    m_selectorSectionsSplitter->setHandleWidth(4);
+    m_selectorSectionsSplitter->addWidget(yearsGroup);
+    m_selectorSectionsSplitter->addWidget(m_monthYearSelector);
+    m_selectorSectionsSplitter->setStretchFactor(0, 3);
+    m_selectorSectionsSplitter->setStretchFactor(1, 2);
+    m_selectorSectionsSplitter->setSizes({320, 200});
+    selectorLayout->addWidget(m_selectorSectionsSplitter, 1);
 
     m_mainLayout->addWidget(selectorCard);
 }
 
 void MainWindow::createFileInfoCard()
 {
+
     m_fileInfoCard = new QFrame();
     m_fileInfoCard->setStyleSheet("background: white; border-radius: 10px;");
+
 
     QVBoxLayout* fileLayout = new QVBoxLayout(m_fileInfoCard);
     fileLayout->setContentsMargins(16, 16, 16, 16);
@@ -399,25 +840,57 @@ void MainWindow::createFileInfoCard()
 
 void MainWindow::createMappingsCard()
 {
-    m_mappingsCard = new QFrame();
-    m_mappingsCard->setStyleSheet("background: white; border-radius: 10px;");
-
-    QVBoxLayout* mappingsCardLayout = new QVBoxLayout(m_mappingsCard);
-    mappingsCardLayout->setContentsMargins(16, 16, 16, 16);
-    mappingsCardLayout->setSpacing(12);
-
+    // Create sidebar for mappings (collapsible left panel) - Premium design
+    m_mappingsSidebar = new QFrame();
+    m_mappingsSidebar->setStyleSheet(
+        "QFrame {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #FAFBFC, stop:1 #F5F7FA);"
+        "  border-right: none;"
+        "  border-top-right-radius: 12px;"
+        "  border-bottom-right-radius: 12px;"
+        "}"
+    );
+    m_mappingsSidebar->setMinimumWidth(500);
+    m_mappingsSidebar->setMaximumWidth(1200);
+    
+    QVBoxLayout* sidebarLayout = new QVBoxLayout(m_mappingsSidebar);
+    sidebarLayout->setContentsMargins(20, 20, 20, 20);
+    sidebarLayout->setSpacing(16);
+    
+    // Header with title - Premium styling
     QLabel* title = new QLabel("Active Mappings");
-    title->setStyleSheet("font-weight: 600; font-size: 15px;");
-    mappingsCardLayout->addWidget(title);
+    title->setStyleSheet(
+        "font-weight: 700; "
+        "font-size: 16px; "
+        "color: #1A1F36; "
+        "letter-spacing: -0.3px;"
+    );
+    sidebarLayout->addWidget(title);
 
-    // Select All / Deselect All toggle button
+    // Select All / Deselect All toggle button - Premium design
     m_btnSelectAll = new QPushButton("Select All");
     m_btnSelectAll->setStyleSheet(
-        "QPushButton { background: #4F46E5; color: white; font-weight: 600; "
-        "padding: 6px 14px; border-radius: 6px; font-size: 11px; }"
-        "QPushButton:hover { background: #4338CA; }"
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #6366F1, stop:1 #4F46E5);"
+        "  color: white;"
+        "  font-weight: 600;"
+        "  padding: 8px 16px;"
+        "  border-radius: 8px;"
+        "  font-size: 11px;"
+        "  border: none;"
+        "}"
+        "QPushButton:hover {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #5558E3, stop:1 #4338CA);"
+        "}"
+        "QPushButton:pressed {"
+        "  background: #4338CA;"
+        "}"
     );
     m_btnSelectAll->setMaximumWidth(120);
+    m_btnSelectAll->setCursor(Qt::PointingHandCursor);
     m_allSelected = false;
     connect(m_btnSelectAll, &QPushButton::clicked, this, [this]() {
         m_allSelected = !m_allSelected;
@@ -426,43 +899,161 @@ void MainWindow::createMappingsCard()
             m_mappingController->setAllChecked(m_allSelected);
         }
     });
-    mappingsCardLayout->addWidget(m_btnSelectAll);
+    sidebarLayout->addWidget(m_btnSelectAll);
 
-    auto createSection = [this, mappingsCardLayout](const QString& label, QWidget*& container, QVBoxLayout*& layout) {
-        QLabel* sectionTitle = new QLabel(label);
-        sectionTitle->setStyleSheet("font-weight: 600; margin-top: 6px;");
-        mappingsCardLayout->addWidget(sectionTitle);
+    // Separator line
+    QFrame* separator = new QFrame();
+    separator->setFrameShape(QFrame::HLine);
+    separator->setStyleSheet(
+        "background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+        "  stop:0 rgba(0,0,0,0), stop:0.5 rgba(0,0,0,0.08), stop:1 rgba(0,0,0,0));"
+        "border: none;"
+        "height: 1px;"
+    );
+    sidebarLayout->addWidget(separator);
 
-        container = new QWidget();
-        layout = new QVBoxLayout(container);
-        layout->setSpacing(8);
+    // Mappings scroll area - Premium styling
+    m_costControlContainer = new QWidget();
+    m_costControlContainer->setStyleSheet("background: transparent;");
+    m_costControlLayout = new QVBoxLayout(m_costControlContainer);
+    m_costControlLayout->setSpacing(12);
+    m_costControlLayout->setContentsMargins(0, 0, 0, 0);
 
-        QScrollArea* scroll = new QScrollArea();
-        scroll->setWidget(container);
-        scroll->setWidgetResizable(true);
-        scroll->setMinimumHeight(140);
-        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-        scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-        mappingsCardLayout->addWidget(scroll);
-    };
+    QScrollArea* scroll = new QScrollArea();
+    scroll->setWidget(m_costControlContainer);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setStyleSheet(
+        "QScrollArea {"
+        "  background: transparent;"
+        "  border: none;"
+        "}"
+        "QScrollBar:vertical {"
+        "  background: transparent;"
+        "  width: 10px;"
+        "  border-radius: 5px;"
+        "}"
+        "QScrollBar::handle:vertical {"
+        "  background: rgba(0, 0, 0, 0.15);"
+        "  border-radius: 5px;"
+        "  min-height: 30px;"
+        "}"
+        "QScrollBar::handle:vertical:hover {"
+        "  background: rgba(0, 0, 0, 0.25);"
+        "}"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+        "  height: 0px;"
+        "}"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+        "  background: transparent;"
+        "}"
+    );
+    sidebarLayout->addWidget(scroll, 1);
 
-    createSection("Cost Control", m_costControlContainer, m_costControlLayout);
-    if (m_mappingController && m_costControlContainer && m_costControlLayout) {
-        m_mappingController->setParentWidget(m_costControlContainer);
-        m_mappingController->setSectionLayouts(m_costControlLayout, nullptr, nullptr, nullptr, nullptr);
-    }
-
-    m_noMappingsLabel = new QLabel("No mappings loaded. Select periods and click Load.");
-    m_noMappingsLabel->setStyleSheet("color: #6B7280; font-style: italic; padding: 20px;");
-    mappingsCardLayout->addWidget(m_noMappingsLabel);
-
-    m_mainLayout->addWidget(m_mappingsCard);
+    // No mappings label - Premium styling
+    m_noMappingsLabel = new QLabel("No mappings loaded.\nSelect periods and click Load.");
+    m_noMappingsLabel->setStyleSheet(
+        "color: #8B92A7;"
+        "font-style: italic;"
+        "font-size: 12px;"
+        "padding: 40px 20px;"
+        "background: rgba(255, 255, 255, 0.5);"
+        "border-radius: 12px;"
+        "border: 2px dashed #D1D5DB;"
+    );
+    m_noMappingsLabel->setAlignment(Qt::AlignCenter);
+    sidebarLayout->addWidget(m_noMappingsLabel);
+    
+    // Store reference for later use (don't add to main layout yet)
+    m_mappingsCard = m_mappingsSidebar;
 }
 
 void MainWindow::createIndividualTab()
 {
     m_individualTransferTab = new IndividualTransferTab(this);
     m_tabWidget->addTab(m_individualTransferTab, "Individual Transfer");
+}
+
+void MainWindow::createHybridTab()
+{
+    m_hybridTransferTab = new HybridTransferTab(this);
+    m_tabWidget->addTab(m_hybridTransferTab, "Hybrid Transfer");
+    
+    connect(m_hybridTransferTab, &HybridTransferTab::executeRequested,
+            this, &MainWindow::onHybridExecute);
+}
+
+void MainWindow::onHybridExecute(const HybridTransferConfig& config)
+{
+    if (guardBusy("HybridTransfer")) return;
+
+    if (m_hybridWorker) {
+        m_hybridWorker->stop();
+        m_hybridWorker->deleteLater();
+        m_hybridWorker = nullptr;
+    }
+
+    m_hybridWorker = new HybridWorker(this, this);
+
+    connect(m_hybridWorker, &HybridWorker::phaseStarted,
+        this, [this](const QString& phase) {
+            updateStatusBar(QString("Hybrid: Starting %1...").arg(phase));
+            qInfo() << "[Hybrid] Phase started:" << phase;
+            // Forward to tab for UI updates
+            if (m_hybridTransferTab) {
+                m_hybridTransferTab->onPhaseStarted(phase);
+            }
+        });
+
+    connect(m_hybridWorker, &HybridWorker::phaseFinished,
+        this, [this](const QString& phase, bool success) {
+            QString status = success ? "completed" : "FAILED";
+            updateStatusBar(
+                QString("Hybrid: %1 %2").arg(phase, status));
+            qInfo() << "[Hybrid] Phase finished:" << phase << status;
+            // Forward to tab for UI updates
+            if (m_hybridTransferTab) {
+                m_hybridTransferTab->onPhaseFinished(phase, success);
+            }
+        });
+
+    connect(m_hybridWorker, &HybridWorker::progressUpdate,
+        this, [this](int percent, const QString& msg) {
+            m_progressBar->setVisible(true);
+            m_progressBar->setValue(percent);
+            updateStatusBar(msg);
+            // Forward to tab for UI updates
+            if (m_hybridTransferTab) {
+                m_hybridTransferTab->onProgressUpdate(percent, msg);
+            }
+        });
+
+    connect(m_hybridWorker, &HybridWorker::allFinished,
+        this, [this](bool success, const QString& summary) {
+            m_progressBar->setVisible(false);
+            updateStatusBar(success
+                ? "Hybrid transfer completed successfully"
+                : "Hybrid transfer completed with errors");
+            qInfo().noquote() << "[Hybrid]" << summary;
+
+            showToast(success
+                ? "Hybrid transfer complete!"
+                : "Hybrid transfer finished with errors",
+                success ? ToastWidget::Success : ToastWidget::Warning,
+                5000);
+
+            // Forward to tab for UI updates
+            if (m_hybridTransferTab) {
+                m_hybridTransferTab->onAllFinished(success, summary);
+            }
+
+            m_hybridWorker->deleteLater();
+            m_hybridWorker = nullptr;
+        });
+
+    m_hybridWorker->execute(config);
 }
 
 void MainWindow::updateStatusBar(const QString& message)
@@ -474,12 +1065,27 @@ void MainWindow::showToast(const QString& message, ToastWidget::ToastType type, 
 {
     if (!m_toastWidget) {
         m_toastWidget = new ToastWidget(this);
+        connect(m_toastWidget, &QObject::destroyed, this, [this]() {
+            m_toastWidget = nullptr;
+        });
     }
-    m_toastWidget->showToast(message, type, duration);
+    if (m_toastWidget) {
+        m_toastWidget->showToast(message, type, duration);
+    }
 }
 
 // onGeneratePeriodRows() removed  ? period rows now auto-generate when year checkboxes are toggled.
 // The connect() in createMonthYearSelector() calls m_periodController->generatePeriodRows() directly.
+
+bool MainWindow::guardBusy(const QString& action)
+{
+    if (isBusy()) {
+        qDebug() << "[GUARD] BLOCKED action:" << action << "(busy)";
+        statusBar()->showMessage("⏳ Please wait — operation in progress...", 2000);
+        return true;  // caller should return immediately
+    }
+    return false;
+}
 
 void MainWindow::onClearPeriodRows()
 {
@@ -501,6 +1107,50 @@ void MainWindow::onClearPeriodRows()
     }
 
     updateStatusBar("Period rows cleared");
+}
+
+void MainWindow::clearAllSelections()
+{
+    // Deselect all months in all year cards
+    for (auto it = m_yearCards.begin(); it != m_yearCards.end(); ++it) {
+        YearCard* card = it.value();
+        if (!card) continue;
+        card->blockSignals(true);
+        card->deselectAllMonths();
+        card->blockSignals(false);
+    }
+
+    // Also clear the period model
+    if (m_periodModel) {
+        for (const YearEntry& entry : m_periodModel->years()) {
+            for (int m = 0; m < 12; m++) {
+                if (m < MONTHS_LIST.size()) {
+                    m_periodModel->setMonthSelected(entry.year, MONTHS_LIST[m], false);
+                }
+            }
+        }
+    }
+}
+
+void MainWindow::selectPeriod(const QString& month, int year)
+{
+    // Find the month index
+    int monthIdx = MONTHS_LIST.indexOf(month);
+    if (monthIdx < 0) return;
+
+    // Select in year card
+    YearCard* card = m_yearCards.value(year, nullptr);
+    if (card) {
+        card->blockSignals(true);
+        card->setExpanded(true);
+        card->selectMonth(monthIdx);
+        card->blockSignals(false);
+    }
+
+    // Select in period model
+    if (m_periodModel) {
+        m_periodModel->setMonthSelected(year, month, true);
+    }
 }
 
 void MainWindow::onResetAll()
@@ -667,9 +1317,12 @@ void MainWindow::reconnectSignals()
         connect(card, &YearCard::yearChecked, this, [this](int yr, bool checked) {
             if (m_periodController) {
                 m_periodController->onYearToggled(yr, checked);
-                if (checked) m_periodController->generatePeriodRows();
+                if (checked && m_generatePeriodTimer)
+                    m_generatePeriodTimer->start();
             }
         });
+        connect(card, &YearCard::createMonthFilesRequested,
+                this, &MainWindow::onCreateMonthFilesMode);
     }
 }
 
@@ -715,6 +1368,13 @@ bool MainWindow::verifyPassword(const QString& action)
 
 void MainWindow::onLoadSelectedPeriods()
 {
+    if (guardBusy("LoadSelectedPeriods")) return;
+    // If create files mode is active, redirect to file creation instead of loading
+    if (m_createFilesMode && m_createFilesYear > 0) {
+        onCreateMonthFile();
+        return;
+    }
+
     if (m_isLoadingPeriods || m_isLoadingRT) {
         qInfo() << "onLoadSelectedPeriods BLOCKED (re-entrant)";
         return;
@@ -766,7 +1426,7 @@ void MainWindow::onLoadSelectedPeriods()
     m_progressBar->setVisible(true);
     m_progressBar->setValue(0);
     updateStatusBar("Loading...");
-    showStatusSidebar();
+    // Status log is only shown when user clicks the Log toggle button
 
     m_mappingController->clearAllMappings();
 
@@ -931,7 +1591,7 @@ void MainWindow::onLoadSelectedPeriods()
         m_progressBar->setVisible(false);
         int ok = 0;
         for (const auto& r : results) if (r.success) ok++;
-        const QString summary = QString("Ready  ? %1/%2 files pre-loaded, %3 mapping(s)")
+        const QString summary = QString("Ready %1/%2 files pre-loaded, %3 mapping(s)")
                                     .arg(ok).arg(results.size()).arg(m_mappingController->mappingCount());
         updateStatusBar(summary);
         qInfo() << "[LOAD]" << summary;
@@ -950,6 +1610,16 @@ void MainWindow::loadMappingsForPeriods()
     if (periods.isEmpty()) {
         m_noMappingsLabel->setVisible(true);
         updateStatusBar("No periods selected.");
+        return;
+    }
+
+    // Safety guard: too many periods = stack overflow when building mapping rows
+    // Each period = 9 mappings. Max safe = 5 periods = 45 mappings.
+    if (periods.size() > 5) {
+        QMessageBox::warning(this, "Too Many Periods Selected",
+            QString("You have selected %1 months. Maximum is 5 months at a time.\n\nPlease deselect some months and try again.")
+                .arg(periods.size()),
+            QMessageBox::Ok);
         return;
     }
 
@@ -988,10 +1658,23 @@ void MainWindow::loadMappingsForPeriods()
 void MainWindow::onExecuteAll()
 {
     // Prevent re-entrant calls (setVisible on statusDock can trigger signals during layout)
+    if (guardBusy("ExecuteAll")) return;
     if (m_isTransferRunning) {
         qInfo() << "onExecuteAll BLOCKED (re-entrant, transfer already running)";
         return;
     }
+    // Guard: check selected periods count FIRST before doing anything else
+    {
+        QVector<QPair<QString,int>> periods = getSelectedPeriods();
+        if (periods.size() > 5) {
+            QMessageBox::warning(this, "Too Many Periods Selected",
+                QString("You have selected %1 months. Maximum is 5 at a time.\n\nPlease deselect some months and try again.")
+                    .arg(periods.size()),
+                QMessageBox::Ok);
+            return;
+        }
+    }
+
     qInfo() << "onExecuteAll [1] ENTERED mappings=" << (m_mappingController ? m_mappingController->mappingCount() : -1);
     if (m_mappingController->mappingCount() == 0) {
         showToast("No mappings to execute.", ToastWidget::Warning);
@@ -1008,17 +1691,18 @@ void MainWindow::onExecuteAll()
         }
     }
     if (!anyChecked) {
-        showToast("No mappings selected. Use ? Select All or check individual cards.", ToastWidget::Warning);
+        showToast("No mapping cards selected. Please check at least one mapping card to proceed.", ToastWidget::Warning);
         return;
     }
 
-    showStatusSidebar();
+    // Log panel stays hidden — user controls via Log toggle button
     qInfo() << "onExecuteAll [2] sidebar shown";
 
     m_isTransferRunning = true;
     m_isTransferPaused = false;
     m_isTransferStopRequested = false;
     m_transferSuccessfulMappings = 0;
+    if (m_busyTimeout) m_busyTimeout->start(10 * 60 * 1000); // 10-minute safety net
     m_transferFailedMappings.clear();
 
     // Clear previous full-sheet overrides before starting a new transfer run
@@ -1075,10 +1759,13 @@ void MainWindow::onExecuteAll()
         tm.month = item.month;
         tm.rowIndex = i;
 
-        // Ensure latest UI state for copy-full-sheet option
+        // TODO: TECHNICAL DEBT - These widget syncs are a workaround for model staleness.
+        // Long-term fix: Connect widget change signals to syncRowToModel() so model
+        // is always current, then remove these patches and trust model as single source of truth.
         tm.entry.copyFullSheet = row->isCopyFullSheet();
         tm.entry.customSheetName = row->getCustomSheetName();
         tm.entry.insertAfterSheet = row->getInsertAfterSheet();
+        tm.entry.ignoredDestRows = row->ignoredRows();
 
         tm.destPath = findCostControlPath(item.month, item.year);
         if (tm.destPath.isEmpty()) {
@@ -1090,14 +1777,77 @@ void MainWindow::onExecuteAll()
 
     qInfo() << "onExecuteAll [8] transfer list built, size=" << transferMappings.size();
     m_transferTotalMappings = transferMappings.size();
-    if (transferMappings.isEmpty()) {
+    auto abortExecutionSetup = [this]() {
         m_isTransferRunning = false;
         m_btnExecuteAll->setEnabled(true);
         m_btnPause->setEnabled(false);
         m_btnStop->setEnabled(false);
         m_progressBar->setVisible(false);
+        if (m_transferDialog) {
+            m_transferDialog->reset();
+            m_transferDialog->hide();
+            m_transferDialog->deleteLater();
+            m_transferDialog = nullptr;
+        }
+    };
+
+    // Safety guard: block execution if too many mappings selected at once.
+    // Each mapping loads Excel files and runs transfers — too many causes stack overflow.
+    // Normal use: 1 month = 9 mappings. Max safe: ~5 months = 45 mappings.
+    if (transferMappings.size() > 45) {
+        QMessageBox::warning(
+            this, "Too Many Mappings Selected",
+            QString("You have selected %1 mappings (%2 months × 9 mappings each).\n\n"
+                    "The maximum safe limit is 45 mappings (5 months).\n\n"
+                    "Please deselect some months and try again.")
+                .arg(transferMappings.size())
+                .arg(transferMappings.size() / 9),
+            QMessageBox::Ok
+        );
+        m_isTransferRunning = false;
+        m_btnExecuteAll->setEnabled(true);
+        m_btnPause->setEnabled(false);
+        m_btnStop->setEnabled(false);
+        m_progressBar->setVisible(false);
+        if (m_transferDialog) { m_transferDialog->close(); m_transferDialog->deleteLater(); m_transferDialog = nullptr; }
+        return;
+    }
+
+    if (transferMappings.isEmpty()) {
+        abortExecutionSetup();
         showToast("No selected mappings to execute.", ToastWidget::Warning);
         return;
+    }
+
+    // Preflight workbook validation with replacement option for corrupt/non-ZIP files.
+    qInfo() << "onExecuteAll [8b] validating workbook files";
+    QMap<QString, QString> resolvedPaths;
+    for (TransferMapping& tm : transferMappings) {
+        QString resolvedDest;
+        const QString destLabel = QString("Destination workbook for %1 %2")
+                                      .arg(tm.month)
+                                      .arg(tm.year);
+        if (!resolveWorkbookPath(this, destLabel, tm.destPath, resolvedPaths, &resolvedDest)) {
+            abortExecutionSetup();
+            showToast("Transfer cancelled by user.", ToastWidget::Warning, 4000);
+            return;
+        }
+        tm.destPath = resolvedDest;
+
+        if (!tm.entry.sourcePath.trimmed().isEmpty()) {
+            QString resolvedSource;
+            const QString sourceLabel = QString("Source workbook for %1 %2 (%3)")
+                                            .arg(tm.month)
+                                            .arg(tm.year)
+                                            .arg(tm.entry.sourceFileType);
+            if (!resolveWorkbookPath(this, sourceLabel,
+                                     tm.entry.sourcePath, resolvedPaths, &resolvedSource)) {
+                abortExecutionSetup();
+                showToast("Transfer cancelled by user.", ToastWidget::Warning, 4000);
+                return;
+            }
+            tm.entry.sourcePath = resolvedSource;
+        }
     }
 
     // Check destination files are not locked/open
@@ -1137,7 +1887,7 @@ void MainWindow::onExecuteAll()
                 m_transferDialog->deleteLater();
                 m_transferDialog = nullptr;
             }
-            showToast(QString("? File is open in Excel  ? please close it first:\n%1")
+            showToast(QString("File is open in Excel, please close it first:\n%1")
                           .arg(QFileInfo(destPath).fileName()), ToastWidget::Warning, 8000);
             return;
         }
@@ -1182,6 +1932,7 @@ void MainWindow::onTransferFinished(int totalCells, int executed, const QStringL
     const bool wasStopRequested = m_isTransferStopRequested;
     m_isTransferRunning = false;
     m_isTransferStopRequested = false;
+    if (m_busyTimeout) m_busyTimeout->stop();
     m_btnExecuteAll->setEnabled(true);
     m_btnPause->setEnabled(false);
     m_btnPause->setText("Pause");
@@ -1219,7 +1970,7 @@ void MainWindow::onTransferFinished(int totalCells, int executed, const QStringL
         const QString summary = "Some mappings failed to save. Check the log and ensure the destination file is not open.";
         updateStatusBar(summary);
         qWarning() << summary;
-        showStatusSidebar();
+        // Log panel stays hidden — user controls via Log toggle button
     }
 
     QStringList summaryLines;
@@ -1241,6 +1992,11 @@ void MainWindow::onTransferFinished(int totalCells, int executed, const QStringL
         ? QString("Transfer stopped safely after current sheet: %1 cells").arg(totalCells)
         : QString("Transfer complete: %1 cells").arg(totalCells));
     qInfo() << "onTransferFinished [5] RETURNING";
+    
+    // Emit signal for HybridWorker
+    bool success = m_transferFailedMappings.isEmpty();
+    emit transferFinished(success,
+        QString("%1 cells, %2 executed").arg(totalCells).arg(executed));
 }
 
 void MainWindow::onStopTransfer()
@@ -1281,12 +2037,14 @@ void MainWindow::onPauseTransfer()
 
 void MainWindow::onLoadRT()
 {
+    if (guardBusy("LoadRT")) return;
     if (m_isLoadingRT || m_isLoadingPeriods) {
         qInfo() << "onLoadRT BLOCKED (re-entrant)";
         return;
     }
     if (!m_rollingService) return;
     m_isLoadingRT = true;
+    if (m_busyTimeout) m_busyTimeout->start(10 * 60 * 1000); // 10-minute safety net
 
     QVector<QPair<QString, int>> periods = getSelectedPeriods();
     if (periods.isEmpty()) {
@@ -1350,6 +2108,8 @@ void MainWindow::onLoadRT()
     const QString paxPath = QString("%1/pax.json").arg(jsonBase);
     const QString staffPath = QString("%1/staff.json").arg(jsonBase);
     const QString budgetRefiPath = QString("%1/mappings_budget_refi_prev_year.json").arg(jsonBase);
+    const QString paxTransferPath = QString("%1/mappings_pax_transfer.json").arg(jsonBase);
+    const QString trafficMottPath = QString("%1/Traffic_mott.json").arg(jsonBase);
 
     if (!yearsWithOldMappings.isEmpty()) {
         m_mappingsManager->loadMappings(mappingsOldPath);
@@ -1362,6 +2122,8 @@ void MainWindow::onLoadRT()
     m_mappingsManager->loadPaxMappings(paxPath);
     m_mappingsManager->loadStaffMappings(staffPath);
     m_mappingsManager->loadBudgetRefiMappings(budgetRefiPath);
+    m_mappingsManager->loadPaxTransferMappings(paxTransferPath);
+    m_mappingsManager->loadTrafficMottMappings(trafficMottPath);
 
     for (const auto& period : periods) {
         const QString& month = period.first;
@@ -1404,6 +2166,24 @@ void MainWindow::onLoadRT()
                 m_mappingController->addMappingRow(month, year, entry);
             }
         }
+
+        // 6. PAX Transfer rows (Sheet1 → TRAFFIC mott sheet, no division)
+        if (m_mappingsManager) {
+            for (MappingEntry entry : m_mappingsManager->getPaxTransferMappingsForMonthYear(month, year)) {
+                entry.sourceJson = paxTransferPath;
+                entry.sourcePath = m_excelHandler->findPaxFile(m_destFolder, month, year);
+                m_mappingController->addMappingRow(month, year, entry);
+            }
+        }
+
+        // 7. Traffic mott rows (Sheet1 → TRAFFIC mott sheet in cost control year/month)
+        if (m_mappingsManager) {
+            for (MappingEntry entry : m_mappingsManager->getTrafficMottMappingsForMonthYear(month, year)) {
+                entry.sourceJson = trafficMottPath;
+                entry.sourcePath = m_excelHandler->findPaxFile(m_destFolder, month, year);
+                m_mappingController->addMappingRow(month, year, entry);
+            }
+        }
     }
 
     m_noMappingsLabel->setVisible(m_mappingController->mappingCount() == 0);
@@ -1418,10 +2198,11 @@ void MainWindow::onLoadRT()
     QStringList stepList;
     for (const auto& s : m_rollingChain)
         stepList << QString("%1 %2").arg(s.month).arg(s.year);
-    updateStatusBar(QString("RT Ready: %1  ? click Execute RT to start").arg(stepList.join(" � ")));
+    updateStatusBar(QString("RT Ready: %1 click Execute RT to start").arg(stepList.join(" � ")));
     qInfo() << "RT chain built:" << stepList.join(" � ");
 
     m_isLoadingRT = false;
+    if (m_busyTimeout) m_busyTimeout->stop();
 }
 
 void MainWindow::onRollingTransfer()
@@ -1429,6 +2210,22 @@ void MainWindow::onRollingTransfer()
     if (!m_rollingService) return;
     if (m_rollingChain.isEmpty()) {
         showToast("Click Load RT first.", ToastWidget::Warning);
+        return;
+    }
+    
+    // Check if at least one mapping card is checked
+    bool anyChecked = false;
+    if (m_mappingController) {
+        for (int i = 0; i < m_mappingController->mappingCount(); ++i) {
+            MappingRow* row = m_mappingController->rowAt(i);
+            if (row && row->isChecked()) {
+                anyChecked = true;
+                break;
+            }
+        }
+    }
+    if (!anyChecked) {
+        showToast("No mapping cards selected. Please check at least one mapping card to proceed.", ToastWidget::Warning);
         return;
     }
 
@@ -1469,6 +2266,12 @@ void MainWindow::onRollingTransfer()
                  << "months," << result.totalCells << "cells";
         if (!result.errors.isEmpty())
             qInfo() << "RT Errors:" << result.errors;
+        
+        // Emit signal for HybridWorker
+        bool success = result.errors.isEmpty();
+        emit rollingTransferFinished(success,
+            QString("%1/%2 months, %3 cells").arg(result.successfulMonths)
+                .arg(result.totalMonths).arg(result.totalCells));
     });
 
     // Check destination files for RT are not locked/open
@@ -1542,6 +2345,7 @@ void MainWindow::onRollingTransfer()
         const QString paxPath = QString("%1/pax.json").arg(jsonBase);
         const QString staffPath = QString("%1/staff.json").arg(jsonBase);
         const QString budgetRefiPath = QString("%1/mappings_budget_refi_prev_year.json").arg(jsonBase);
+        const QString paxTransferPath = QString("%1/mappings_pax_transfer.json").arg(jsonBase);
         const QString trafficMottPath = QString("%1/Traffic_mott.json").arg(jsonBase);
 
         if (!yearsWithOldMappings.isEmpty()) {
@@ -1555,6 +2359,7 @@ void MainWindow::onRollingTransfer()
         m_mappingsManager->loadPaxMappings(paxPath);
         m_mappingsManager->loadStaffMappings(staffPath);
         m_mappingsManager->loadBudgetRefiMappings(budgetRefiPath);
+        m_mappingsManager->loadPaxTransferMappings(paxTransferPath);
         m_mappingsManager->loadTrafficMottMappings(trafficMottPath);
 
         for (const auto& period : chainPeriods) {
@@ -1580,6 +2385,12 @@ void MainWindow::onRollingTransfer()
                     allEntriesByMonth[key].append(sel.entry);
             }
 
+            for (MappingEntry entry : m_mappingsManager->getPaxTransferMappingsForMonthYear(month, year)) {
+                entry.sourceJson = paxTransferPath;
+                entry.sourcePath = m_excelHandler->findPaxFile(m_destFolder, month, year);
+                allEntriesByMonth[key].append(entry);
+            }
+
             for (MappingEntry entry : m_mappingsManager->getTrafficMottMappingsForMonthYear(month, year)) {
                 entry.sourceJson = trafficMottPath;
                 entry.sourcePath = m_excelHandler->findPaxFile(m_destFolder, month, year);
@@ -1595,6 +2406,60 @@ void MainWindow::onRollingTransfer()
         }();
     }
 
+    qInfo() << "RT: validating workbook path dependencies";
+    QMap<QString, QString> resolvedPaths;
+    
+    if (!m_rollingChain.isEmpty()) {
+        QString resolvedFirst;
+        const QString firstLabel = QString("Previous month workbook (Source for %1 %2)")
+                                       .arg(m_rollingChain.first().month)
+                                       .arg(m_rollingChain.first().year);
+        if (!resolveWorkbookPath(this, firstLabel, m_rollingChain.first().inputPath, resolvedPaths, &resolvedFirst)) {
+            m_progressBar->setVisible(false);
+            if (m_rtDialog) {
+                m_rtDialog->reset();
+                m_rtDialog->hide();
+                m_rtDialog->deleteLater();
+                m_rtDialog = nullptr;
+            }
+            m_btnRollingTransfer->setEnabled(true);
+            m_btnStop->setEnabled(false);
+            m_btnLoad->setEnabled(true);
+            m_btnLoadRT->setEnabled(true);
+            showToast("RT cancelled by user.", ToastWidget::Warning, 4000);
+            return;
+        }
+        m_rollingChain[0].inputPath = resolvedFirst;
+    }
+
+    for (auto it = allEntriesByMonth.begin(); it != allEntriesByMonth.end(); ++it) {
+        QVector<MappingEntry>& entries = it.value();
+        for (MappingEntry& entry : entries) {
+            if (!entry.sourcePath.trimmed().isEmpty()) {
+                QString usageLabel = QString("RT source workbook: %1 (%2)")
+                                         .arg(it.key(), entry.sourceFileType);
+                
+                QString resolvedSource;
+                if (!resolveWorkbookPath(this, usageLabel, entry.sourcePath, resolvedPaths, &resolvedSource)) {
+                    m_progressBar->setVisible(false);
+                    if (m_rtDialog) {
+                        m_rtDialog->reset();
+                        m_rtDialog->hide();
+                        m_rtDialog->deleteLater();
+                        m_rtDialog = nullptr;
+                    }
+                    m_btnRollingTransfer->setEnabled(true);
+                    m_btnStop->setEnabled(false);
+                    m_btnLoad->setEnabled(true);
+                    m_btnLoadRT->setEnabled(true);
+                    showToast("RT cancelled by user.", ToastWidget::Warning, 4000);
+                    return;
+                }
+                entry.sourcePath = resolvedSource;
+            }
+        }
+    }
+
     qInfo() << "RT: using entries for months:" << allEntriesByMonth.keys();
     RollingWorker* worker = new RollingWorker(m_rollingService, m_rollingChain, m_destFolder, jsonBase, allEntriesByMonth, this);
     connect(worker, &RollingWorker::finished, this, [this, worker](const RollingResult&) {
@@ -1603,7 +2468,168 @@ void MainWindow::onRollingTransfer()
     worker->start();
 }
 
+void MainWindow::onCreateMonthFile()
+{
+    // Called when Load Periods is clicked in Create Files mode.
+    // Finds the last existing Cost Control xlsm for m_createFilesYear,
+    // then copies it for each selected month that doesn't already have a file.
 
+    int year = m_createFilesYear;
+    QVector<QPair<QString, int>> periods = getSelectedPeriods();
+
+    // Filter to only the create-mode year
+    QVector<QString> selectedMonths;
+    for (const auto& p : periods) {
+        if (p.second == year) selectedMonths.append(p.first);
+    }
+
+    if (selectedMonths.isEmpty()) {
+        showToast(QString("No months selected for %1. Select months first.").arg(year),
+                  ToastWidget::Warning, 3000);
+        return;
+    }
+
+    // Find the last existing Cost Control file for this year (scan Dec → Jan)
+    QString srcPath;
+    QString srcMonthName;
+    for (int m = 12; m >= 1; --m) {
+        QString mn = QString("%1").arg(m, 2, 10, QChar('0'));
+        QString candidate = QString("%1/%2/%3/test/Cost Control ZAG %3_%2_working.xlsm")
+                                .arg(m_destFolder).arg(year).arg(mn);
+        if (QFile::exists(candidate)) {
+            srcPath = candidate;
+            srcMonthName = MONTHS_LIST[m - 1];
+            break;
+        }
+    }
+
+    if (srcPath.isEmpty()) {
+        // No existing file found — ask user to pick one manually
+        showToast(QString("No existing Cost Control file found for %1. Please select one manually.").arg(year),
+                  ToastWidget::Warning, 3000);
+        srcPath = QFileDialog::getOpenFileName(
+            this,
+            QString("Select source Cost Control file for %1").arg(year),
+            m_destFolder,
+            "Excel Files (*.xlsm *.xlsx)"
+        );
+        if (srcPath.isEmpty()) return;
+        srcMonthName = "selected file";
+    }
+
+    // Build list of files to create
+    QStringList toCreate, alreadyExist, failed, created;
+    for (const QString& month : selectedMonths) {
+        QString mn = MONTH_TO_NUM.value(month, "01");
+        QString destDir  = QString("%1/%2/%3/test").arg(m_destFolder).arg(year).arg(mn);
+        QString destFile = QString("Cost Control ZAG %1_%2_working.xlsm").arg(mn).arg(year);
+        QString destPath = QString("%1/%2").arg(destDir).arg(destFile);
+        if (QFile::exists(destPath)) {
+            alreadyExist << QString("%1 %2").arg(month).arg(year);
+        } else {
+            toCreate << month;
+        }
+    }
+
+    if (toCreate.isEmpty()) {
+        showToast("All selected months already have files — nothing to create.", ToastWidget::Info, 3000);
+        return;
+    }
+
+    // Confirm
+    QString confirmMsg = QString("Create files for: %1\n\nSource: %2\n\nAlready exist (skipped): %3")
+        .arg(toCreate.join(", "))
+        .arg(srcPath)
+        .arg(alreadyExist.isEmpty() ? "none" : alreadyExist.join(", "));
+
+    if (QMessageBox::question(this, QString("Create %1 files for %2").arg(toCreate.size()).arg(year),
+                              confirmMsg,
+                              QMessageBox::Yes | QMessageBox::Cancel) != QMessageBox::Yes) return;
+
+    // Create each file
+    for (const QString& month : toCreate) {
+        QString mn = MONTH_TO_NUM.value(month, "01");
+        QString destDir  = QString("%1/%2/%3/test").arg(m_destFolder).arg(year).arg(mn);
+        QString destFile = QString("Cost Control ZAG %1_%2_working.xlsm").arg(mn).arg(year);
+        QString destPath = QString("%1/%2").arg(destDir).arg(destFile);
+
+        QDir().mkpath(destDir);
+        if (QFile::copy(srcPath, destPath)) {
+            created << QString("%1 %2").arg(month).arg(year);
+            qInfo() << "[CREATE MONTH FILE] OK:" << destPath;
+        } else {
+            failed << QString("%1 %2").arg(month).arg(year);
+            qWarning() << "[CREATE MONTH FILE] Failed:" << destPath;
+        }
+    }
+
+    // Report results
+    QString result = QString("Created %1 file(s) from %2 %3.")
+        .arg(created.size()).arg(srcMonthName).arg(year);
+    if (!failed.isEmpty())
+        result += QString("\nFailed: %1").arg(failed.join(", "));
+    if (!alreadyExist.isEmpty())
+        result += QString("\nSkipped (already exist): %1").arg(alreadyExist.join(", "));
+
+    updateStatusBar(result);
+    showToast(result, failed.isEmpty() ? ToastWidget::Success : ToastWidget::Warning, 5000);
+    qInfo() << "[CREATE MONTH FILE]" << result;
+}
+
+void MainWindow::onIgnoreRows(int index)
+{
+    if (!m_mappingController) return;
+    MappingRow* row = m_mappingController->rowAt(index);
+    if (!row) return;
+
+    MappingEntry entry = row->getMapping();
+    if (entry.rowMap.isEmpty()) {
+        showToast("This mapping has no rowMap — nothing to ignore.", ToastWidget::Info, 3000);
+        return;
+    }
+
+    // Find the loaded dest workbook key for current value preview
+    // Use the first loaded cost_control workbook
+    QString destKey = m_currentDestKey; // set during load phase
+
+    IgnoreRowsDialog dlg(entry, m_excelHandler, destKey, this);
+    if (dlg.exec() == QDialog::Accepted) {
+        entry.ignoredDestRows = dlg.ignoredDestRows();
+        row->setIgnoredRows(dlg.ignoredDestRows());
+        
+        // ✅ FIX: Sync all widget state back to model using centralized helper
+        m_mappingController->syncRowToModel(index);
+
+        int count = entry.ignoredDestRows.size();
+        if (count > 0)
+            showToast(QString("%1 rows will be skipped for this mapping.").arg(count),
+                      ToastWidget::Info, 3000);
+        else
+            showToast("No rows ignored — all rows will be transferred.", ToastWidget::Success, 2000);
+    }
+}
+
+void MainWindow::onCreateMonthFilesMode(int year, bool active)
+{
+    m_createFilesMode = active;
+    m_createFilesYear = active ? year : 0;
+
+    // Disable/enable Load buttons to prevent normal load while in create mode
+    if (m_btnLoad)   m_btnLoad->setEnabled(!active);
+    if (m_btnLoadRT) m_btnLoadRT->setEnabled(!active);
+
+    if (active) {
+        updateStatusBar(QString("Create Files mode ON for %1 — select months then click Load Periods").arg(year));
+        showToast(QString("Create Files mode: select months for %1, then click Load Periods").arg(year),
+                  ToastWidget::Info, 4000);
+        // Re-enable Load button — it will now CREATE files instead of loading mappings
+        if (m_btnLoad) m_btnLoad->setEnabled(true);
+    } else {
+        updateStatusBar("Create Files mode OFF — normal load restored");
+        if (m_btnLoad)   m_btnLoad->setEnabled(true);
+        if (m_btnLoadRT) m_btnLoadRT->setEnabled(true);
+    }
+}
 
 void MainWindow::onYearCheckboxChanged(Qt::CheckState state)
 {
@@ -1711,6 +2737,7 @@ void MainWindow::onMappingEditRowsClicked(int index)
 
         row->setSourceRows(entry.sourceRows);
         row->setDestRows(entry.destRows);
+        m_mappingController->syncRowToModel(index);
 
         updateStatusBar("Mapping updated");
     }
@@ -1759,7 +2786,7 @@ void MainWindow::onExportRowMapClicked(int index)
         const QString summary = QString("RowMap export failed: %1").arg(file.errorString());
         updateStatusBar(summary);
         qWarning() << summary;
-        showStatusSidebar();
+        // Log panel stays hidden — user controls via Log toggle button
     }
 }
 
@@ -1780,7 +2807,7 @@ void MainWindow::onImportRowMapClicked(int index)
         const QString summary = QString("RowMap import failed: %1").arg(file.errorString());
         updateStatusBar(summary);
         qWarning() << summary;
-        showStatusSidebar();
+        // Log panel stays hidden — user controls via Log toggle button
         return;
     }
 
@@ -1813,6 +2840,9 @@ void MainWindow::onImportRowMapClicked(int index)
             entry.rowMap[destRow] = srcRows;
         }
 
+        row->setRowMap(entry.rowMap);
+        m_mappingController->updateEntryAt(index, entry);
+
         showToast("RowMap imported successfully", ToastWidget::Success);
     }
 }
@@ -1834,7 +2864,7 @@ void MainWindow::onTransferError(const QString& error)
     const QString summary = QString("Transfer error: %1").arg(error);
     updateStatusBar(summary);
     qWarning() << summary;
-    showStatusSidebar();
+    // Log panel stays hidden — user controls via Log toggle button
 }
 
 void MainWindow::blockAllYearCardSignals(bool block)
@@ -2202,6 +3232,85 @@ void MainWindow::onExportSelectedMonths()
     updateStatusBar(QString("Exported %1 cells").arg(totalCells));
 }
 
+void MainWindow::populateFillAllMappingCards(MappingController* controller,
+                                              const QString& month, int year)
+{
+    if (!controller || !m_mappingsManager) return;
+
+    const QString jsonBase = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../JSON");
+    const QString mappingsOldPath  = QString("%1/mappings_old.json").arg(jsonBase);
+    const QString mappingsNewPath  = QString("%1/mappings.json").arg(jsonBase);
+    const QString sapYtdPath       = QString("%1/mappings_sap_ytd.json").arg(jsonBase);
+    const QString paxPath          = QString("%1/pax.json").arg(jsonBase);
+    const QString staffPath        = QString("%1/staff.json").arg(jsonBase);
+    const QString budgetRefiPath   = QString("%1/mappings_budget_refi_prev_year.json").arg(jsonBase);
+    const QString paxTransferPath  = QString("%1/mappings_pax_transfer.json").arg(jsonBase);
+    const QString trafficMottPath  = QString("%1/Traffic_mott.json").arg(jsonBase);
+
+    // Load all JSON files (same as onLoadSelectedPeriods)
+    if (year <= 2025)
+        m_mappingsManager->loadMappings(mappingsOldPath);
+    else
+        m_mappingsManager->loadMappings(mappingsNewPath);
+
+    m_mappingsManager->loadSapYtdMappings(sapYtdPath);
+    m_mappingsManager->loadPaxMappings(paxPath);
+    m_mappingsManager->loadStaffMappings(staffPath);
+    m_mappingsManager->loadBudgetRefiMappings(budgetRefiPath);
+    m_mappingsManager->loadPaxTransferMappings(paxTransferPath);
+    m_mappingsManager->loadTrafficMottMappings(trafficMottPath);
+
+    if (!m_mappingService) m_mappingService = new MappingService(m_mappingsManager, this);
+
+    // 1. Cost control / SAP rows
+    for (MappingEntry entry : m_mappingsManager->getMappingsForMonthYear(month, year)) {
+        if (entry.sourceFileType == "sap_ytd") continue;
+        entry.sourceJson = (year <= 2025) ? mappingsOldPath : mappingsNewPath;
+        entry.sourcePath = (entry.sourceFileType == "sap")
+                           ? m_excelHandler->findSAPFile(m_destFolder, month, year)
+                           : findCostControlPath(month, year);
+        controller->addMappingRow(month, year, entry);
+    }
+    // 2. Budget / REFI
+    for (MappingEntry entry : m_mappingsManager->getDynamicMappingsForMonthYear(month, year)) {
+        entry.sourceJson = budgetRefiPath;
+        entry.sourcePath = findCostControlPath(month, year);
+        controller->addMappingRow(month, year, entry);
+    }
+    // 3. PAX
+    if (m_mappingService) {
+        for (auto sel : m_mappingService->collectPaxMappings({{month, year}})) {
+            sel.entry.sourceJson = paxPath;
+            sel.entry.sourcePath = m_excelHandler->findPaxFile(m_destFolder, month, year);
+            controller->addMappingRow(sel.month, sel.year, sel.entry);
+        }
+        // 4. Staff
+        for (auto sel : m_mappingService->collectStaffMappings({{month, year}})) {
+            sel.entry.sourceJson = staffPath;
+            sel.entry.sourcePath = m_excelHandler->findStaffFile(m_destFolder, year);
+            controller->addMappingRow(sel.month, sel.year, sel.entry);
+        }
+    }
+    // 5. SAP YTD
+    for (MappingEntry entry : m_mappingsManager->getSapYtdMappingsForMonthYear(month, year)) {
+        entry.sourceJson = sapYtdPath;
+        entry.sourcePath = m_excelHandler->findSapYtdFile(m_destFolder, month, year);
+        controller->addMappingRow(month, year, entry);
+    }
+    // 6. PAX Transfer
+    for (MappingEntry entry : m_mappingsManager->getPaxTransferMappingsForMonthYear(month, year)) {
+        entry.sourceJson = paxTransferPath;
+        entry.sourcePath = m_excelHandler->findPaxFile(m_destFolder, month, year);
+        controller->addMappingRow(month, year, entry);
+    }
+    // 7. Traffic Mott
+    for (MappingEntry entry : m_mappingsManager->getTrafficMottMappingsForMonthYear(month, year)) {
+        entry.sourceJson = trafficMottPath;
+        entry.sourcePath = m_excelHandler->findPaxFile(m_destFolder, month, year);
+        controller->addMappingRow(month, year, entry);
+    }
+}
+
 void MainWindow::createFillAllTab()
 {
     m_fillAllMonthsTab = new FillAllMonthsTab(this);
@@ -2213,14 +3322,203 @@ void MainWindow::createFillAllTab()
 
 void MainWindow::onFillAllExecute(const FillAllScanResult& result)
 {
-    // Implementation stays in MainWindow since it needs access to services
-    // Use result parameter instead of m_fillAllScanResult
-    qInfo() << "[FILL ALL] Starting execution for year" << result.year << "target month" << result.targetMonth;
-    
-    // TODO: Implement the actual fill all execution logic here
-    // This will use m_excelHandler, m_transferService, etc.
-    
-    showToast("Fill All execution not yet implemented", ToastWidget::Info);
+    qInfo() << "[FILL ALL] Starting execution for year" << result.year
+            << "target month" << result.targetMonth;
+
+    if (!m_excelHandler || !m_mappingsManager || !m_transferService) {
+        showToast("Internal error: services not initialized.", ToastWidget::Error, 4000);
+        return;
+    }
+
+    // Guard against double-click / concurrent execution
+    if (m_fillAllRunning) {
+        showToast("Fill All is already running — please wait.", ToastWidget::Warning, 3000);
+        return;
+    }
+    m_fillAllRunning = true;
+    if (m_fillAllMonthsTab) m_fillAllMonthsTab->setExecuteEnabled(false);
+    if (m_busyTimeout) m_busyTimeout->start(10 * 60 * 1000); // 10-minute safety net
+
+    // Fill All must not depend on whichever periods were previously loaded in the UI.
+    // Reload mapping JSONs explicitly for the requested year.
+    const QString jsonBase = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../JSON");
+    const QString mappingsOldPath = QString("%1/mappings_old.json").arg(jsonBase);
+    const QString mappingsNewPath = QString("%1/mappings.json").arg(jsonBase);
+    const QString sapYtdPath = QString("%1/mappings_sap_ytd.json").arg(jsonBase);
+    const QString paxPath = QString("%1/pax.json").arg(jsonBase);
+    const QString staffPath = QString("%1/staff.json").arg(jsonBase);
+    const QString budgetRefiPath = QString("%1/mappings_budget_refi_prev_year.json").arg(jsonBase);
+    const QString paxTransferPath = QString("%1/mappings_pax_transfer.json").arg(jsonBase);
+    const QString trafficMottPath = QString("%1/Traffic_mott.json").arg(jsonBase);
+
+    bool loadedCore = (result.year <= 2025)
+                          ? m_mappingsManager->loadMappings(mappingsOldPath)
+                          : m_mappingsManager->loadMappings(mappingsNewPath);
+    bool loadedAll = loadedCore
+                  && m_mappingsManager->loadSapYtdMappings(sapYtdPath)
+                  && m_mappingsManager->loadPaxMappings(paxPath)
+                  && m_mappingsManager->loadStaffMappings(staffPath)
+                  && m_mappingsManager->loadBudgetRefiMappings(budgetRefiPath)
+                  && m_mappingsManager->loadPaxTransferMappings(paxTransferPath)
+                  && m_mappingsManager->loadTrafficMottMappings(trafficMottPath);
+
+    if (!loadedAll) {
+        showToast("Fill All cancelled: failed to load mapping JSON files.", ToastWidget::Error, 6000);
+        m_fillAllRunning = false;
+        if (m_fillAllMonthsTab) m_fillAllMonthsTab->setExecuteEnabled(true);
+        return;
+    }
+
+    FillAllScanResult scan = result;
+    QMap<QString, QString> resolvedPaths;
+
+    QString resolvedDest;
+    if (!resolveWorkbookPath(this, "Fill All destination workbook",
+                             scan.destFilePath, resolvedPaths, &resolvedDest)) {
+        showToast("Fill All cancelled by user.", ToastWidget::Warning, 4000);
+        m_fillAllRunning = false;
+        if (m_fillAllMonthsTab) m_fillAllMonthsTab->setExecuteEnabled(true);
+        return;
+    }
+    scan.destFilePath = resolvedDest;
+
+    for (FillAllFileEntry& entry : scan.entries) {
+        QString resolvedSource;
+        const QString usageLabel = QString("Fill All source workbook: %1 (%2)")
+                                       .arg(entry.month, entry.transferType);
+        if (!resolveWorkbookPath(this, usageLabel,
+                                 entry.sourceFilePath, resolvedPaths, &resolvedSource)) {
+            showToast("Fill All cancelled by user.", ToastWidget::Warning, 4000);
+            m_fillAllRunning = false;
+            if (m_fillAllMonthsTab) m_fillAllMonthsTab->setExecuteEnabled(true);
+            return;
+        }
+        entry.sourceFilePath = resolvedSource;
+        entry.found = QFile::exists(entry.sourceFilePath);
+    }
+
+    if (scan.destFilePath.isEmpty() || !QFile::exists(scan.destFilePath)) {
+        showToast("Fill All cancelled: destination file is missing.", ToastWidget::Warning, 5000);
+        m_fillAllRunning = false;
+        if (m_fillAllMonthsTab) m_fillAllMonthsTab->setExecuteEnabled(true);
+        return;
+    }
+
+    // Check if destination file is locked (open in Excel)
+    {
+        QFile destFile(scan.destFilePath);
+        if (!destFile.open(QIODevice::ReadWrite)) {
+            const QString fileName = QFileInfo(scan.destFilePath).fileName();
+            showToast(
+                QString("File is open in Excel — please close it first:\n%1").arg(fileName),
+                ToastWidget::Warning, 8000);
+            m_fillAllRunning = false;
+            if (m_fillAllMonthsTab) m_fillAllMonthsTab->setExecuteEnabled(true);
+            return;
+        }
+        destFile.close();
+    }
+
+    if (m_fillAllDialog) {
+        m_fillAllDialog->reset();
+        m_fillAllDialog->hide();
+        m_fillAllDialog->deleteLater();
+        m_fillAllDialog = nullptr;
+    }
+    m_fillAllDialog = new QProgressDialog("Preparing Fill All...", QString(), 0, 100, this);
+    m_fillAllDialog->setWindowTitle("Fill All Months");
+    m_fillAllDialog->setWindowModality(Qt::NonModal);
+    m_fillAllDialog->setWindowFlags(m_fillAllDialog->windowFlags() | Qt::Tool);
+    m_fillAllDialog->setMinimumDuration(0);
+    m_fillAllDialog->setAutoClose(false);
+    m_fillAllDialog->setAutoReset(false);
+    m_fillAllDialog->setCancelButton(nullptr);
+    m_fillAllDialog->setValue(0);
+
+    // Create worker + thread
+    auto* worker = new FillAllWorker(m_excelHandler, m_mappingsManager,
+                                     m_transferService, scan);
+    auto* thread = new QThread(this);
+    worker->moveToThread(thread);
+
+    // Progress → status bar
+    connect(worker, &FillAllWorker::progress,
+            this, [this](int cur, int tot, const QString& msg) {
+                const int percent = (tot > 0) ? qMin(100, (cur * 100) / tot) : 0;
+                if (m_fillAllDialog) {
+                    m_fillAllDialog->setValue(percent);
+                    m_fillAllDialog->setLabelText(msg);
+                }
+                updateStatusBar(QString("[%1/%2] %3").arg(cur).arg(tot).arg(msg));
+            });
+
+    // Finished
+    connect(worker, &FillAllWorker::finished,
+            this, [this, thread](const FillAllResult& res) {
+                thread->quit();
+                m_fillAllRunning = false;
+                if (m_busyTimeout) m_busyTimeout->stop();
+                if (m_fillAllMonthsTab) m_fillAllMonthsTab->setExecuteEnabled(true);
+                if (m_fillAllDialog) {
+                    m_fillAllDialog->setValue(100);
+                    m_fillAllDialog->setLabelText("Fill All finished");
+                }
+                if (res.errors.isEmpty() && res.warnings.isEmpty()) {
+                    showToast(QString("Fill All complete — %1 cells transferred.")
+                                  .arg(res.cellsTransferred),
+                              ToastWidget::Success, 5000);
+                    updateStatusBar(QString("Fill All done: %1 cells")
+                                        .arg(res.cellsTransferred));
+                } else {
+                    QString summary;
+                    if (!res.errors.isEmpty()) {
+                        const QString firstError = res.errors.first();
+                        summary = QString("Fill All finished with %1 error(s): %2")
+                                      .arg(res.errors.size())
+                                      .arg(firstError);
+                    } else {
+                        const QString firstWarning = res.warnings.first();
+                        summary = QString("Fill All finished with %1 warning(s): %2")
+                                      .arg(res.warnings.size())
+                                      .arg(firstWarning);
+                    }
+
+                    showToast(summary, ToastWidget::Warning, 8000);
+                    updateStatusBar(summary);
+
+                    for (const QString& err : res.errors)
+                        qWarning() << "[FILL ALL] Error:" << err;
+                    for (const QString& warn : res.warnings)
+                        qWarning() << "[FILL ALL] Warning:" << warn;
+                }
+
+                QTimer::singleShot(700, this, [this]() {
+                    if (!m_fillAllDialog) return;
+                    m_fillAllDialog->reset();
+                    m_fillAllDialog->hide();
+                    m_fillAllDialog->deleteLater();
+                    m_fillAllDialog = nullptr;
+                });
+            });
+
+    connect(thread, &QThread::started,  worker, &FillAllWorker::run);
+    connect(thread, &QThread::finished, worker, &QObject::deleteLater);
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+
+    showToast(QString("Fill All starting → %1 %2...")
+                  .arg(scan.targetMonth)
+                  .arg(scan.year),
+              ToastWidget::Info, 3000);
+
+    thread->start();
+}
+
+QVector<MappingItem> MainWindow::getLoadedMappings() const
+{
+    if (m_mappingModel) {
+        return m_mappingModel->items();
+    }
+    return QVector<MappingItem>();
 }
 
 QString MainWindow::findCostControlFile(const QString& monthFolder)
@@ -2356,24 +3654,49 @@ void MainWindow::onIndividualSelectSourceCell()
         return;
     }
 
-    bool ok = false;
-    QString sheet = QInputDialog::getText(this, "Source Sheet", "Sheet name:",
-                                          QLineEdit::Normal, config.sourceSheet, &ok);
-    if (!ok || sheet.trimmed().isEmpty()) return;
+    // Load the source file if not already loaded
+    const QString srcKey = "individual_source";
+    if (!m_excelHandler->isLoaded(srcKey)) {
+        if (!m_excelHandler->loadWorkbook(config.sourceFile, srcKey)) {
+            showToast("Failed to load source file for preview", ToastWidget::Warning);
+            return;
+        }
+    }
 
-    QString column = QInputDialog::getText(this, "Source Column", "Column letter:",
-                                           QLineEdit::Normal, config.sourceColumn, &ok);
-    if (!ok || column.trimmed().isEmpty()) return;
+    SheetCellSelectorDialog dlg(this);
+    dlg.setWindowTitle("Select Source Cell");
+    dlg.setSheetNames(m_excelHandler->getSheetNames(srcKey));
+    dlg.setExcelHandler(m_excelHandler, srcKey);
+    SheetCellSelectorDialog::CellSelection sel;
+    sel.sheetName = config.sourceSheet;
+    sel.column    = config.sourceColumn;
+    sel.row       = config.sourceRow > 0 ? config.sourceRow : 1;
+    dlg.setCellSelection(sel);
 
-    int row = QInputDialog::getInt(this, "Source Row", "Row number:",
-                                   config.sourceRow > 0 ? config.sourceRow : 1,
-                                   1, 1000000, 1, &ok);
-    if (!ok) return;
-
-    config.sourceSheet = sheet.trimmed();
-    config.sourceColumn = column.trimmed().toUpper();
-    config.sourceRow = row;
-    m_individualPanel->setTransferConfig(config);
+    if (dlg.exec() == QDialog::Accepted) {
+        auto selections = dlg.getCellSelections();
+        if (!selections.isEmpty()) {
+            std::sort(selections.begin(), selections.end(), [](const auto& a, const auto& b) {
+                return a.row < b.row;
+            });
+            QVector<IndividualTransferPanel::MappingEntry> data = panel->getMappingData();
+            if (data.size() < selections.size()) {
+                data.resize(selections.size());
+            }
+            for (int i = 0; i < selections.size(); ++i) {
+                data[i].sourceCell = QString("%1%2").arg(selections[i].column).arg(selections[i].row);
+                data[i].sheetName = selections[i].sheetName;
+            }
+            panel->setMappingData(data);
+            
+            auto first = selections.first();
+            config.sourceSheet  = first.sheetName;
+            config.sourceColumn = first.column;
+            config.sourceRow    = first.row;
+            config.cellCount    = selections.size();
+            panel->setTransferConfig(config);
+        }
+    }
 }
 
 void MainWindow::onIndividualSelectDestCell()
@@ -2387,24 +3710,47 @@ void MainWindow::onIndividualSelectDestCell()
         return;
     }
 
-    bool ok = false;
-    QString sheet = QInputDialog::getText(this, "Destination Sheet", "Sheet name:",
-                                          QLineEdit::Normal, config.destSheet, &ok);
-    if (!ok || sheet.trimmed().isEmpty()) return;
+    // Load the dest file if not already loaded
+    const QString destKey = "individual_dest";
+    if (!m_excelHandler->isLoaded(destKey)) {
+        if (!m_excelHandler->loadWorkbook(config.destFile, destKey)) {
+            showToast("Failed to load destination file for preview", ToastWidget::Warning);
+            return;
+        }
+    }
 
-    QString column = QInputDialog::getText(this, "Destination Column", "Column letter:",
-                                           QLineEdit::Normal, config.destColumn, &ok);
-    if (!ok || column.trimmed().isEmpty()) return;
+    SheetCellSelectorDialog dlg(this);
+    dlg.setWindowTitle("Select Destination Cell");
+    dlg.setSheetNames(m_excelHandler->getSheetNames(destKey));
+    dlg.setExcelHandler(m_excelHandler, destKey);
+    SheetCellSelectorDialog::CellSelection sel;
+    sel.sheetName = config.destSheet;
+    sel.column    = config.destColumn;
+    sel.row       = config.destRow > 0 ? config.destRow : 1;
+    dlg.setCellSelection(sel);
 
-    int row = QInputDialog::getInt(this, "Destination Row", "Row number:",
-                                   config.destRow > 0 ? config.destRow : 1,
-                                   1, 1000000, 1, &ok);
-    if (!ok) return;
-
-    config.destSheet = sheet.trimmed();
-    config.destColumn = column.trimmed().toUpper();
-    config.destRow = row;
-    m_individualPanel->setTransferConfig(config);
+    if (dlg.exec() == QDialog::Accepted) {
+        auto selections = dlg.getCellSelections();
+        if (!selections.isEmpty()) {
+            std::sort(selections.begin(), selections.end(), [](const auto& a, const auto& b) {
+                return a.row < b.row;
+            });
+            QVector<IndividualTransferPanel::MappingEntry> data = panel->getMappingData();
+            if (data.size() < selections.size()) {
+                data.resize(selections.size());
+            }
+            for (int i = 0; i < selections.size(); ++i) {
+                data[i].destCell = QString("%1%2").arg(selections[i].column).arg(selections[i].row);
+            }
+            panel->setMappingData(data);
+            
+            auto first = selections.first();
+            config.destSheet  = first.sheetName;
+            config.destColumn = first.column;
+            config.destRow    = first.row;
+            panel->setTransferConfig(config);
+        }
+    }
 }
 
 void MainWindow::onIndividualTransfer(const IndividualTransferPanel::TransferConfig& config)
@@ -2433,27 +3779,69 @@ void MainWindow::onIndividualTransfer(const IndividualTransferPanel::TransferCon
         
         // Perform transfer
         int cellsTransferred = 0;
-        int srcCol = m_excelHandler->letterToColumn(config.sourceColumn);
-        int destCol = m_excelHandler->letterToColumn(config.destColumn);
         
-        for (int i = 0; i < config.cellCount; i++) {
-            QVariant value = m_excelHandler->getCellValue(
-                srcKey, config.sourceSheet, config.sourceRow + i, srcCol
-            );
-            
-            if (value.isValid()) {
-                // Apply division if needed
-                if (config.divideBy1000 && value.canConvert<double>()) {
-                    double numValue = value.toDouble() / 1000.0;
-                    value = numValue;
-                }
+        auto panel = m_individualTransferTab ? m_individualTransferTab->panel() : nullptr;
+        QVector<IndividualTransferPanel::MappingEntry> mappings;
+        if (panel) mappings = panel->getMappingData();
+        
+        if (!mappings.isEmpty()) {
+            // New logic: Transfer using the graphical multi-cell mapping table
+            for (const auto& entry : mappings) {
+                if (entry.sourceCell.isEmpty() || entry.destCell.isEmpty()) continue;
                 
-                bool success = m_excelHandler->setCellValue(
-                    destKey, config.destSheet, config.destRow + i, destCol, value
+                QRegularExpression re("^([A-Za-z]+)(\\d+)$");
+                QRegularExpressionMatch srcMatch = re.match(entry.sourceCell);
+                QRegularExpressionMatch destMatch = re.match(entry.destCell);
+                if (!srcMatch.hasMatch() || !destMatch.hasMatch()) continue;
+                
+                int srcCol = m_excelHandler->letterToColumn(srcMatch.captured(1).toUpper());
+                int srcRow = srcMatch.captured(2).toInt();
+                int destCol = m_excelHandler->letterToColumn(destMatch.captured(1).toUpper());
+                int destRow = destMatch.captured(2).toInt();
+                
+                QString srcSheet = entry.sheetName;
+                if (srcSheet.isEmpty()) srcSheet = config.sourceSheet;
+                
+                QVariant value = m_excelHandler->getCellValue(srcKey, srcSheet, srcRow, srcCol);
+                
+                if (value.isValid()) {
+                    if (config.divideBy1000 && value.canConvert<double>()) {
+                        double numValue = value.toDouble() / 1000.0;
+                        value = numValue;
+                    }
+                    
+                    bool success = m_excelHandler->setCellValue(
+                        destKey, config.destSheet, destRow, destCol, value
+                    );
+                    
+                    if (success) {
+                        cellsTransferred++;
+                    }
+                }
+            }
+        } else {
+            // Fallback to legacy loop mechanism if no mapping items are strictly laid out
+            int srcCol = m_excelHandler->letterToColumn(config.sourceColumn);
+            int destCol = m_excelHandler->letterToColumn(config.destColumn);
+            
+            for (int i = 0; i < config.cellCount; i++) {
+                QVariant value = m_excelHandler->getCellValue(
+                    srcKey, config.sourceSheet, config.sourceRow + i, srcCol
                 );
                 
-                if (success) {
-                    cellsTransferred++;
+                if (value.isValid()) {
+                    if (config.divideBy1000 && value.canConvert<double>()) {
+                        double numValue = value.toDouble() / 1000.0;
+                        value = numValue;
+                    }
+                    
+                    bool success = m_excelHandler->setCellValue(
+                        destKey, config.destSheet, config.destRow + i, destCol, value
+                    );
+                    
+                    if (success) {
+                        cellsTransferred++;
+                    }
                 }
             }
         }
@@ -2485,5 +3873,6 @@ void MainWindow::onIndividualTransfer(const IndividualTransferPanel::TransferCon
         showToast(QString("Transfer failed: %1").arg(e.what()), ToastWidget::Error);
     }
 }
+
 
 

@@ -33,27 +33,36 @@ void IndividualTransferPanel::resetToDefaults()
 void IndividualTransferPanel::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(20, 20, 20, 20);
-    mainLayout->setSpacing(18);
+    mainLayout->setContentsMargins(16, 16, 16, 16);
+    mainLayout->setSpacing(12);
 
     // Title
     QLabel* titleLabel = new QLabel("Individual Cell Transfer");
     titleLabel->setStyleSheet(
-        "font-size: 20px; font-weight: 700; color: #1E40AF; margin-bottom: 8px;"
+        "font-size: 18px; font-weight: 700; color: #1F2937; "
+        "letter-spacing: -0.3px; margin-bottom: 4px;"
     );
     mainLayout->addWidget(titleLabel);
 
     QLabel* descLabel = new QLabel(
         "Select source and destination files, then use graphical selection to map cells."
     );
-    descLabel->setStyleSheet("color: #6B7280; font-size: 13px; margin-bottom: 12px;");
+    descLabel->setStyleSheet("color: #6B7280; font-size: 13px; margin-bottom: 8px;");
     mainLayout->addWidget(descLabel);
 
     // Source File Group
     QGroupBox* sourceGroup = new QGroupBox("SOURCE FILE");
     sourceGroup->setStyleSheet(
-        "QGroupBox { font-weight: 600; padding-top: 12px; }"
-        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+        "QGroupBox {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #FAFBFC, stop:1 #F5F7FA);"
+        "  border-radius: 12px; padding: 16px; padding-top: 28px;"
+        "  font-weight: 600; color: #374151;"
+        "}"
+        "QGroupBox::title {"
+        "  subcontrol-origin: margin; left: 12px; padding: 0 6px;"
+        "  color: #374151; font-size: 12px; letter-spacing: 0.5px;"
+        "}"
     );
     QHBoxLayout* srcLayout = new QHBoxLayout(sourceGroup);
     
@@ -61,14 +70,26 @@ void IndividualTransferPanel::setupUI()
     m_sourceFileEdit->setPlaceholderText("No file selected");
     m_sourceFileEdit->setReadOnly(true);
     m_sourceFileEdit->setStyleSheet(
-        "padding: 10px; background: #F9FAFB; border: 1px solid #D1D5DB; border-radius: 6px;"
+        "QLineEdit {"
+        "  padding: 10px; background: white;"
+        "  border: 1px solid #E5E7EB; border-radius: 6px; font-size: 13px;"
+        "}"
     );
     srcLayout->addWidget(m_sourceFileEdit, 1);
     
-    QPushButton* btnBrowseSrc = new QPushButton("Browse...");
+    QPushButton* btnBrowseSrc = new QPushButton("⚙ Browse");
     btnBrowseSrc->setStyleSheet(
-        "background: #3B82F6; color: white; padding: 10px 20px; "
-        "border-radius: 6px; font-weight: 600;"
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #3B82F6, stop:1 #2563EB);"
+        "  color: white; padding: 10px 20px;"
+        "  border-radius: 6px; font-weight: 600; border: none;"
+        "}"
+        "QPushButton:hover {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #2563EB, stop:1 #1D4ED8);"
+        "}"
+        "QPushButton:pressed { background: #1E40AF; }"
     );
     btnBrowseSrc->setFixedHeight(42);
     connect(btnBrowseSrc, &QPushButton::clicked, this, &IndividualTransferPanel::onBrowseSourceClicked);
@@ -79,8 +100,16 @@ void IndividualTransferPanel::setupUI()
     // Destination File Group
     QGroupBox* destGroup = new QGroupBox("DESTINATION FILE");
     destGroup->setStyleSheet(
-        "QGroupBox { font-weight: 600; padding-top: 12px; }"
-        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }"
+        "QGroupBox {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #FAFBFC, stop:1 #F5F7FA);"
+        "  border-radius: 12px; padding: 16px; padding-top: 28px;"
+        "  font-weight: 600; color: #374151;"
+        "}"
+        "QGroupBox::title {"
+        "  subcontrol-origin: margin; left: 12px; padding: 0 6px;"
+        "  color: #374151; font-size: 12px; letter-spacing: 0.5px;"
+        "}"
     );
     QHBoxLayout* destLayout = new QHBoxLayout(destGroup);
     
@@ -88,14 +117,26 @@ void IndividualTransferPanel::setupUI()
     m_destFileEdit->setPlaceholderText("No file selected");
     m_destFileEdit->setReadOnly(true);
     m_destFileEdit->setStyleSheet(
-        "padding: 10px; background: #F9FAFB; border: 1px solid #D1D5DB; border-radius: 6px;"
+        "QLineEdit {"
+        "  padding: 10px; background: white;"
+        "  border: 1px solid #E5E7EB; border-radius: 6px; font-size: 13px;"
+        "}"
     );
     destLayout->addWidget(m_destFileEdit, 1);
     
-    QPushButton* btnBrowseDest = new QPushButton("Browse...");
+    QPushButton* btnBrowseDest = new QPushButton("⚙ Browse");
     btnBrowseDest->setStyleSheet(
-        "background: #3B82F6; color: white; padding: 10px 20px; "
-        "border-radius: 6px; font-weight: 600;"
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #3B82F6, stop:1 #2563EB);"
+        "  color: white; padding: 10px 20px;"
+        "  border-radius: 6px; font-weight: 600; border: none;"
+        "}"
+        "QPushButton:hover {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #2563EB, stop:1 #1D4ED8);"
+        "}"
+        "QPushButton:pressed { background: #1E40AF; }"
     );
     btnBrowseDest->setFixedHeight(42);
     connect(btnBrowseDest, &QPushButton::clicked, this, &IndividualTransferPanel::onBrowseDestClicked);
@@ -104,27 +145,51 @@ void IndividualTransferPanel::setupUI()
     mainLayout->addWidget(destGroup);
 
     // Graphical Selection Buttons
-    m_btnSelectSource = new QPushButton("📊 Select Source Cells (Graphical)");
+    m_btnSelectSource = new QPushButton("→ Select Source Cells (Graphical)");
     m_btnSelectSource->setStyleSheet(
-        "background: #8B5CF6; color: white; padding: 12px 24px; "
-        "border-radius: 6px; font-weight: 600; font-size: 14px;"
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #3B82F6, stop:1 #2563EB);"
+        "  color: white; padding: 10px 20px;"
+        "  border-radius: 8px; font-weight: 600; font-size: 13px; border: none;"
+        "}"
+        "QPushButton:hover {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #2563EB, stop:1 #1D4ED8);"
+        "}"
+        "QPushButton:pressed { background: #1E40AF; }"
+        "QPushButton:disabled { background: #E5E7EB; color: #9CA3AF; }"
     );
-    m_btnSelectSource->setFixedHeight(48);
+    m_btnSelectSource->setMaximumWidth(320);
+    m_btnSelectSource->setFixedHeight(44);
     connect(m_btnSelectSource, &QPushButton::clicked, this, &IndividualTransferPanel::onSelectSourceClicked);
     mainLayout->addWidget(m_btnSelectSource);
     
-    m_btnSelectDest = new QPushButton("📊 Select Destination Cells (Graphical)");
+    m_btnSelectDest = new QPushButton("→ Select Destination Cells (Graphical)");
     m_btnSelectDest->setStyleSheet(
-        "background: #8B5CF6; color: white; padding: 12px 24px; "
-        "border-radius: 6px; font-weight: 600; font-size: 14px;"
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #3B82F6, stop:1 #2563EB);"
+        "  color: white; padding: 10px 20px;"
+        "  border-radius: 8px; font-weight: 600; font-size: 13px; border: none;"
+        "}"
+        "QPushButton:hover {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #2563EB, stop:1 #1D4ED8);"
+        "}"
+        "QPushButton:pressed { background: #1E40AF; }"
+        "QPushButton:disabled { background: #E5E7EB; color: #9CA3AF; }"
     );
-    m_btnSelectDest->setFixedHeight(48);
+    m_btnSelectDest->setMaximumWidth(320);
+    m_btnSelectDest->setFixedHeight(44);
     connect(m_btnSelectDest, &QPushButton::clicked, this, &IndividualTransferPanel::onSelectDestClicked);
     mainLayout->addWidget(m_btnSelectDest);
 
     // Mapping Table Section
     QLabel* mappingLabel = new QLabel("Transfer Mapping (editable):");
-    mappingLabel->setStyleSheet("font-weight: 600; font-size: 14px; margin-top: 12px;");
+    mappingLabel->setStyleSheet(
+        "font-weight: 600; font-size: 14px; margin-top: 8px; color: #374151;"
+    );
     mainLayout->addWidget(mappingLabel);
     
     m_mappingTable = new QTableWidget();
@@ -139,14 +204,17 @@ void IndividualTransferPanel::setupUI()
     m_mappingTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_mappingTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_mappingTable->setStyleSheet(
-        "QTableWidget { "
-        "  gridline-color: #E5E7EB; background: white; "
-        "  border: 1px solid #D1D5DB; border-radius: 6px; font-size: 13px; "
+        "QTableWidget {"
+        "  gridline-color: #E5E7EB; background: white;"
+        "  border-radius: 8px; font-size: 13px;"
         "}"
         "QTableWidget::item { padding: 8px; }"
-        "QHeaderView::section { "
-        "  background: #F3F4F6; color: #374151; padding: 10px; "
-        "  border: none; font-weight: 600; "
+        "QTableWidget::item:alternate { background: #F9FAFB; }"
+        "QHeaderView::section {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #F9FAFB, stop:1 #F3F4F6);"
+        "  color: #374151; padding: 10px; font-weight: 600;"
+        "  border: none; border-bottom: 2px solid #E5E7EB;"
         "}"
     );
     m_mappingTable->setMinimumHeight(250);
@@ -164,24 +232,38 @@ void IndividualTransferPanel::setupUI()
     
     QPushButton* btnAdd = new QPushButton("+ Add Row");
     btnAdd->setStyleSheet(
-        "background: #F3F4F6; color: #374151; padding: 8px 16px; "
-        "border-radius: 4px; font-weight: 500;"
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #F9FAFB, stop:1 #F3F4F6);"
+        "  color: #374151; padding: 8px 16px;"
+        "  border-radius: 6px; font-weight: 600; border: none;"
+        "}"
+        "QPushButton:hover { background: #E5E7EB; }"
+        "QPushButton:pressed { background: #D1D5DB; }"
     );
     connect(btnAdd, &QPushButton::clicked, this, &IndividualTransferPanel::onAddMappingRow);
     controlsLayout->addWidget(btnAdd);
     
-    QPushButton* btnRemove = new QPushButton("Remove Selected");
+    QPushButton* btnRemove = new QPushButton("✗ Remove");
     btnRemove->setStyleSheet(
-        "background: #FEF2F2; color: #DC2626; padding: 8px 16px; "
-        "border-radius: 4px; font-weight: 500;"
+        "QPushButton {"
+        "  background: #FEF2F2; color: #DC2626; padding: 8px 16px;"
+        "  border-radius: 6px; font-weight: 600; border: none;"
+        "}"
+        "QPushButton:hover { background: #FEE2E2; }"
+        "QPushButton:pressed { background: #FECACA; }"
     );
     connect(btnRemove, &QPushButton::clicked, this, &IndividualTransferPanel::onRemoveSelectedMapping);
     controlsLayout->addWidget(btnRemove);
     
-    QPushButton* btnClear = new QPushButton("Clear All");
+    QPushButton* btnClear = new QPushButton("✗ Clear All");
     btnClear->setStyleSheet(
-        "background: #FEF2F2; color: #DC2626; padding: 8px 16px; "
-        "border-radius: 4px; font-weight: 500;"
+        "QPushButton {"
+        "  background: #FEF2F2; color: #DC2626; padding: 8px 16px;"
+        "  border-radius: 6px; font-weight: 600; border: none;"
+        "}"
+        "QPushButton:hover { background: #FEE2E2; }"
+        "QPushButton:pressed { background: #FECACA; }"
     );
     connect(btnClear, &QPushButton::clicked, this, &IndividualTransferPanel::onClearMappingTable);
     controlsLayout->addWidget(btnClear);
@@ -190,30 +272,46 @@ void IndividualTransferPanel::setupUI()
 
     // Copy Sheet Checkbox
     m_copySheetCheckbox = new QCheckBox("Copy entire sheet (ignores cell mappings)");
-    m_copySheetCheckbox->setStyleSheet("font-size: 13px; padding: 8px;");
+    m_copySheetCheckbox->setStyleSheet("font-size: 13px; padding: 8px; color: #374151;");
     mainLayout->addWidget(m_copySheetCheckbox);
 
     // Action Buttons
     QHBoxLayout* actionLayout = new QHBoxLayout();
     actionLayout->setSpacing(12);
     
-    QPushButton* btnReset = new QPushButton("Reset");
+    QPushButton* btnReset = new QPushButton("↺ Reset");
     btnReset->setStyleSheet(
-        "background: #F3F4F6; color: #374151; padding: 12px 24px; "
-        "border-radius: 6px; font-weight: 600;"
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #F9FAFB, stop:1 #F3F4F6);"
+        "  color: #374151; padding: 12px 24px;"
+        "  border-radius: 8px; font-weight: 600; border: none;"
+        "}"
+        "QPushButton:hover { background: #E5E7EB; }"
+        "QPushButton:pressed { background: #D1D5DB; }"
     );
-    btnReset->setFixedHeight(52);
+    btnReset->setFixedHeight(48);
     connect(btnReset, &QPushButton::clicked, this, &IndividualTransferPanel::onResetClicked);
     actionLayout->addWidget(btnReset);
     
     actionLayout->addStretch();
     
-    m_transferBtn = new QPushButton("Execute Transfer");
+    m_transferBtn = new QPushButton("▶ Execute Transfer");
     m_transferBtn->setStyleSheet(
-        "background: #059669; color: white; padding: 12px 32px; "
-        "border-radius: 6px; font-weight: 600; font-size: 15px;"
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #059669, stop:1 #047857);"
+        "  color: white; padding: 12px 32px;"
+        "  border-radius: 8px; font-weight: 600; font-size: 14px; border: none;"
+        "}"
+        "QPushButton:hover {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #047857, stop:1 #065F46);"
+        "}"
+        "QPushButton:pressed { background: #064E3B; }"
+        "QPushButton:disabled { background: #E5E7EB; color: #9CA3AF; }"
     );
-    m_transferBtn->setFixedHeight(52);
+    m_transferBtn->setFixedHeight(48);
     connect(m_transferBtn, &QPushButton::clicked, this, &IndividualTransferPanel::onTransferClicked);
     actionLayout->addWidget(m_transferBtn);
     
@@ -250,7 +348,22 @@ void IndividualTransferPanel::updateDestSheets(const QStringList& sheets)
 
 QVector<IndividualTransferPanel::MappingEntry> IndividualTransferPanel::getMappingData() const
 {
-    return m_mappingData;
+    QVector<MappingEntry> currentData = m_mappingData;
+    for (int i = 0; i < m_mappingTable->rowCount() && i < currentData.size(); ++i) {
+        if (auto* item = m_mappingTable->item(i, 0)) {
+            currentData[i].sourceCell = item->text();
+        }
+        if (auto* item = m_mappingTable->item(i, 3)) {
+            currentData[i].destCell = item->text();
+        }
+    }
+    return currentData;
+}
+
+void IndividualTransferPanel::setMappingData(const QVector<MappingEntry>& data)
+{
+    m_mappingData = data;
+    refreshMappingTable();
 }
 
 void IndividualTransferPanel::updateTransferButtonState()
@@ -264,13 +377,24 @@ void IndividualTransferPanel::updateTransferButtonState()
     
     if (!enabled) {
         m_transferBtn->setStyleSheet(
-            "background: #D1D5DB; color: #9CA3AF; padding: 12px 32px; "
-            "border-radius: 6px; font-weight: 600; font-size: 15px;"
+            "QPushButton {"
+            "  background: #E5E7EB; color: #9CA3AF; padding: 12px 32px;"
+            "  border-radius: 8px; font-weight: 600; font-size: 14px; border: none;"
+            "}"
         );
     } else {
         m_transferBtn->setStyleSheet(
-            "background: #059669; color: white; padding: 12px 32px; "
-            "border-radius: 6px; font-weight: 600; font-size: 15px;"
+            "QPushButton {"
+            "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "    stop:0 #059669, stop:1 #047857);"
+            "  color: white; padding: 12px 32px;"
+            "  border-radius: 8px; font-weight: 600; font-size: 14px; border: none;"
+            "}"
+            "QPushButton:hover {"
+            "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "    stop:0 #047857, stop:1 #065F46);"
+            "}"
+            "QPushButton:pressed { background: #064E3B; }"
         );
     }
     

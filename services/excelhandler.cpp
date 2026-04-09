@@ -6,16 +6,17 @@
 #include <QDebug>
 #include <QRegularExpression>
 #include <QFile>
+#include <QFileInfo>
 #include <QDir>
 #include <QBuffer>
 #include <QElapsedTimer>
+#include <QCoreApplication>
+#include <QProcess>
 #include <QtCore/qglobal.h>
 #include <QtCore/private/qzipreader_p.h>
 #include <QtCore/private/qzipwriter_p.h>
 
-// ─────────────────────────────────────────────────────────────────────────────
 //  Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 static QPair<QString, int> splitCellRef(const QString& ref)
 {
@@ -31,9 +32,18 @@ static QString buildCellRef(const QString& col, int row)
     return QString("%1%2").arg(col.toUpper()).arg(row);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Static data
-// ─────────────────────────────────────────────────────────────────────────────
+static constexpr int kMaxExcelRows = 1048576;
+static constexpr int kMaxExcelCols = 16384;
+
+// Forward declarations of static helpers
+static void applyRowColorsHelper(QByteArray& sheetStr, QByteArray& stylesXml, const QSet<int>& mappingRows);
+
+static bool isValidCellAddress(int row, int col)
+{
+    return row > 0 && row <= kMaxExcelRows && col > 0 && col <= kMaxExcelCols;
+}
+
+ //  Static data
 
 const QMap<QString, QString> ExcelHandler::MONTH_TO_NUM = {
     {"January","01"},{"February","02"},{"March","03"},{"April","04"},
@@ -41,16 +51,60 @@ const QMap<QString, QString> ExcelHandler::MONTH_TO_NUM = {
     {"September","09"},{"October","10"},{"November","11"},{"December","12"}
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Constructor / Destructor
-// ─────────────────────────────────────────────────────────────────────────────
+ //  Constructor / Destructor
 
 ExcelHandler::ExcelHandler(QObject *parent) : QObject(parent) {}
 ExcelHandler::~ExcelHandler() {}
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Column helpers
-// ─────────────────────────────────────────────────────────────────────────────
+bool ExcelHandler::validateWorkbookFile(const QString& filePath, QString* errorOut)
+{
+    auto setError = [&](const QString& msg) {
+        if (errorOut) *errorOut = msg;
+    };
+
+    QFileInfo fi(filePath);
+    if (!fi.exists() || !fi.isFile()) {
+        setError(QString("File not found: %1").arg(filePath));
+        return false;
+    }
+
+    QFile probe(filePath);
+    if (!probe.open(QIODevice::ReadOnly)) {
+        setError(QString("Cannot open file. It may be locked/open in Excel: %1")
+                     .arg(probe.errorString()));
+        return false;
+    }
+
+    const QByteArray sig = probe.read(4);
+    probe.close();
+    if (sig.size() < 4 || sig[0] != 'P' || sig[1] != 'K') {
+        setError("File is not a valid OpenXML ZIP archive (.xlsx/.xlsm).");
+        return false;
+    }
+
+    QZipReader zip(filePath);
+    if (!zip.isReadable()) {
+        setError("ZIP container is unreadable. File is likely corrupt or incomplete.");
+        return false;
+    }
+
+    const QByteArray contentTypes = zip.fileData("[Content_Types].xml");
+    if (contentTypes.isEmpty()) {
+        setError("OpenXML structure invalid: missing [Content_Types].xml.");
+        return false;
+    }
+
+    const QByteArray workbookXml = zip.fileData("xl/workbook.xml");
+    if (workbookXml.isEmpty()) {
+        setError("OpenXML structure invalid: missing xl/workbook.xml.");
+        return false;
+    }
+
+    if (errorOut) errorOut->clear();
+    return true;
+}
+
+ //  Column helpers
 
 QString ExcelHandler::staticColumnToLetter(int col)
 {
@@ -65,20 +119,28 @@ QString ExcelHandler::staticColumnToLetter(int col)
 
 int ExcelHandler::staticLetterToColumn(const QString& letter)
 {
+    const QString normalized = letter.trimmed().toUpper();
+    if (normalized.isEmpty())
+        return 0;
+
     int col = 0;
-    for (int i = 0; i < letter.length(); ++i)
-        col = col * 26 + (letter[i].toUpper().toLatin1() - 'A' + 1);
+    for (int i = 0; i < normalized.length(); ++i) {
+        const QChar ch = normalized[i];
+        if (ch < QChar('A') || ch > QChar('Z'))
+            return 0;
+        col = col * 26 + (ch.toLatin1() - 'A' + 1);
+        if (col > kMaxExcelCols)
+            return 0;
+    }
     return col;
 }
 
 QString ExcelHandler::columnToLetter(int col) { return staticColumnToLetter(col); }
 int ExcelHandler::letterToColumn(const QString& letter) { return staticLetterToColumn(letter); }
 
-// No PowerShell extract/compress needed — we use QZipReader/QZipWriter directly in-memory.
+// No PowerShell extract/compress needed  ” we use QZipReader/QZipWriter directly in-memory.
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  OpenXML: load shared strings from raw XML bytes
-// ─────────────────────────────────────────────────────────────────────────────
+ //  OpenXML: load shared strings from raw XML bytes
 
 static QVector<QString> parseSharedStrings(const QByteArray& data)
 {
@@ -104,9 +166,7 @@ static QVector<QString> parseSharedStrings(const QByteArray& data)
     return table;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  OpenXML: parse one sheet XML into SheetData
-// ─────────────────────────────────────────────────────────────────────────────
+ //  OpenXML: parse one sheet XML into SheetData
 
 static SheetData parseSheet(const QByteArray& data, const QString& sheetName,
                              const QVector<QString>& sharedStrings)
@@ -170,24 +230,42 @@ static SheetData parseSheet(const QByteArray& data, const QString& sheetName,
     return sd;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  OpenXML: load workbook metadata ONLY — no sheet parsing (fast)
-// ─────────────────────────────────────────────────────────────────────────────
+ //  OpenXML: load workbook metadata ONLY  ” no sheet parsing (fast)
 
 bool ExcelHandler::loadOpenXML(const QString& filePath, WorkbookData& wb,
-                               const QSet<QString>& sheetsNeeded)
+                               const QSet<QString>& sheetsNeeded,
+                               QString* errorOut)
 {
     qDebug() << "loadOpenXML START" << filePath;
+    // Fast file magic signature check to fail fast without instantiating QZipReader on invalid files
+    QFile probe(filePath);
+    if (probe.open(QIODevice::ReadOnly)) {
+        const QByteArray sig = probe.read(4);
+        probe.close();
+        if (sig.size() < 4 || sig[0] != 'P' || sig[1] != 'K') {
+            if (errorOut) *errorOut = "File is not a valid OpenXML ZIP archive.";
+            return false;
+        }
+    }
+
     QZipReader zip(filePath);
     if (!zip.isReadable()) {
         qWarning() << "ExcelHandler: cannot open ZIP:" << filePath;
+        if (errorOut) {
+            *errorOut = "ZIP container is unreadable. File is likely corrupt or incomplete.";
+        }
         return false;
     }
     qDebug() << "loadOpenXML: ZIP opened, reading workbook.xml...";
 
-    // --- workbook.xml → sheet names + sheetId map ---
+    // --- workbook.xml â†’ sheet names + sheetId map ---
     QByteArray wbData = zip.fileData("xl/workbook.xml");
-    if (wbData.isEmpty()) return false;
+    if (wbData.isEmpty()) {
+        if (errorOut) {
+            *errorOut = "OpenXML structure invalid: missing xl/workbook.xml.";
+        }
+        return false;
+    }
     qDebug() << "loadOpenXML: workbook.xml size=" << wbData.size();
 
     QStringList sheetNames;
@@ -206,7 +284,12 @@ bool ExcelHandler::loadOpenXML(const QString& filePath, WorkbookData& wb,
             }
         }
     }
-    if (sheetNames.isEmpty()) return false;
+    if (sheetNames.isEmpty()) {
+        if (errorOut) {
+            *errorOut = "Workbook metadata invalid: no sheets found in xl/workbook.xml.";
+        }
+        return false;
+    }
 
     // --- shared strings (small, needed for all sheets, load once) ---
     qDebug() << "loadOpenXML: loading sharedStrings.xml...";
@@ -226,7 +309,7 @@ bool ExcelHandler::loadOpenXML(const QString& filePath, WorkbookData& wb,
         qDebug() << "loadOpenXML: cached" << wb.cachedZipEntries.size() << "entries";
     }
 
-    // --- build sheetName → ZIP path map (no sheet parsing yet!) ---
+    // --- build sheetName â†’ ZIP path map (no sheet parsing yet!) ---
     wb.filePath   = filePath;
     wb.sheetNames = sheetNames; // will be replaced with rels-resolved names below if available
     wb.sheets.clear();
@@ -234,8 +317,8 @@ bool ExcelHandler::loadOpenXML(const QString& filePath, WorkbookData& wb,
     wb.rawSheetOverrides.clear();
     wb.modifiedSheets.clear();
 
-    // Also build rId → sheetName from workbook.xml rels for robust mapping
-    QMap<QString, QString> rIdToZipPath; // rId → xl/worksheets/sheetN.xml
+    // Also build rId â†’ sheetName from workbook.xml rels for robust mapping
+    QMap<QString, QString> rIdToZipPath; // rId â†’ xl/worksheets/sheetN.xml
     {
         QByteArray relsData = zip.fileData("xl/_rels/workbook.xml.rels");
         if (!relsData.isEmpty()) {
@@ -252,7 +335,7 @@ bool ExcelHandler::loadOpenXML(const QString& filePath, WorkbookData& wb,
         }
     }
 
-    // Re-parse workbook.xml with r:id to get correct sheetName → ZIP path
+    // Re-parse workbook.xml with r:id to get correct sheetName â†’ ZIP path
     QMap<QString, QString> sheetNameToZipPath;
     {
         QXmlStreamReader r(wbData);
@@ -283,7 +366,7 @@ bool ExcelHandler::loadOpenXML(const QString& filePath, WorkbookData& wb,
             sheetName = sheetIdToName.value(idx, QString("Sheet%1").arg(idx));
         wb.sheetPathMap.insert(sheetName, fi.filePath);
 
-        // Pre-parse only sheets in sheetsNeeded (if specified) — skip the rest (lazy on demand)
+        // Pre-parse only sheets in sheetsNeeded (if specified)  ” skip the rest (lazy on demand)
         if (!sheetsNeeded.isEmpty() && sheetsNeeded.contains(sheetName)) {
             QByteArray data = zip.fileData(fi.filePath);
             if (!data.isEmpty())
@@ -296,25 +379,24 @@ bool ExcelHandler::loadOpenXML(const QString& filePath, WorkbookData& wb,
         wb.sheetNames = sheetNameToZipPath.keys();
 
     wb.isValid = true;
+    if (errorOut) errorOut->clear();
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Lazy sheet loader — called on first access to a sheet
-// ─────────────────────────────────────────────────────────────────────────────
+ //  Lazy sheet loader  ” called on first access to a sheet
 
 SheetData ExcelHandler::loadSheetLazy(const WorkbookData& wb, const QString& sheetName)
 {
     QString zipPath = wb.sheetPathMap.value(sheetName);
     if (zipPath.isEmpty()) {
         qWarning() << "ExcelHandler::loadSheetLazy: sheet not found:" << sheetName
-                   << "— available sheets:" << wb.sheetPathMap.keys();
+                   << " ” available sheets:" << wb.sheetPathMap.keys();
         return SheetData{sheetName, {}, 0, 0};
     }
 
     QByteArray data;
     if (!wb.cachedZipEntries.isEmpty()) {
-        // Fast path: use in-memory cache — no network I/O
+        // Fast path: use in-memory cache  ” no network I/O
         data = wb.cachedZipEntries.value(zipPath);
     } else {
         // Fallback: read from network ZIP
@@ -330,9 +412,7 @@ SheetData ExcelHandler::loadSheetLazy(const WorkbookData& wb, const QString& she
     return parseSheet(data, sheetName, wb.sharedStrings);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  getSheet — returns cached sheet or lazy-loads it (caller must hold write lock)
-// ─────────────────────────────────────────────────────────────────────────────
+ //  getSheet  ” returns cached sheet or lazy-loads it (caller must hold write lock)
 
 SheetData& ExcelHandler::getSheet(const QString& key, const QString& sheetName)
 {
@@ -348,26 +428,22 @@ SheetData& ExcelHandler::getSheet(const QString& key, const QString& sheetName)
     }
 
     if (!wb.sheets.contains(resolvedName)) {
-        // Release write lock temporarily? No — we hold it, just load inline.
+        // Release write lock temporarily? No  ” we hold it, just load inline.
         // loadSheetLazy only reads the ZIP file (no shared state), so it's safe.
         wb.sheets[resolvedName] = loadSheetLazy(wb, resolvedName);
     }
     return wb.sheets[resolvedName];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  OpenXML: save workbook — fully in-memory via QZipReader + QZipWriter
+ //  OpenXML: save workbook  ” fully in-memory via QZipReader + QZipWriter
 //  Strategy: read all entries from original ZIP, replace only modified sheets
-// ─────────────────────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  mergeSheetXml — patches specific cells into original sheet XML bytes
-//  Works directly on raw bytes — no re-serialization, preserves everything.
+ //  mergeSheetXml  ” patches specific cells into original sheet XML bytes
+//  Works directly on raw bytes  ” no re-serialization, preserves everything.
 //  Only the exact cells in SheetData.cells are replaced/inserted.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Forward declarations
-static QByteArray applyRowHighlights(const QByteArray& sheetXml, const QSet<int>& sourceRows, int styleBlue, int styleGrey);
+static QByteArray applyRowHighlights(const QByteArray& sheetXml, const QSet<int>& sourceRows, int styleBlue, int styleLightBlue);
 static QPair<int,int> injectHighlightStyles(QByteArray& stylesXml);
 
 static QString escapeXmlValue(const QString& val)
@@ -571,7 +647,7 @@ static QByteArray removeDuplicateCells(const QByteArray& xml)
     buffer.close();
 
     if (reader.hasError()) {
-        qWarning() << "[XML ERROR] removeDuplicateCells:" << reader.errorString() << "— falling back";
+        qWarning() << "[XML ERROR] removeDuplicateCells:" << reader.errorString() << " ” falling back";
         return xml;
     }
 
@@ -579,26 +655,103 @@ static QByteArray removeDuplicateCells(const QByteArray& xml)
     return output;
 }
 
+static QByteArray sortCellsInRow(const QByteArray& rowContent)
+{
+    struct Cell {
+        int colIndex;
+        QByteArray xml;
+    };
+    QList<Cell> parsedCells;
+    QByteArray extLstXml;
+    
+    int pos = 0;
+    while (pos < rowContent.size()) {
+        int cStart = -1;
+        for (int i = pos; i < rowContent.size() - 2; ++i) {
+            if (rowContent[i] == '<' && rowContent[i+1] == 'c') {
+                char next = rowContent[i+2];
+                if (next == ' ' || next == '\t' || next == '\r' || next == '\n' || next == '/' || next == '>') {
+                    cStart = i;
+                    break;
+                }
+            }
+        }
+        
+        int eStart = rowContent.indexOf("<extLst", pos);
+        
+        if (cStart == -1 && eStart == -1) break;
+        
+        if (eStart != -1 && (cStart == -1 || eStart < cStart)) {
+            extLstXml = rowContent.mid(eStart);
+            break;
+        }
+        
+        int tagEnd = rowContent.indexOf('>', cStart);
+        if (tagEnd == -1) break;
+        
+        int cellEnd;
+        if (rowContent[tagEnd - 1] == '/') {
+            cellEnd = tagEnd + 1;
+        } else {
+            cellEnd = rowContent.indexOf("</c>", tagEnd);
+            if (cellEnd == -1) break;
+            cellEnd += 4;
+        }
+        
+        QByteArray cellXml = rowContent.mid(cStart, cellEnd - cStart);
+        int rIdx = cellXml.indexOf("r=\"");
+        int rEnd = -1;
+        if (rIdx != -1) {
+            rEnd = cellXml.indexOf('"', rIdx + 3);
+        } else {
+            rIdx = cellXml.indexOf("r='");
+            if (rIdx != -1) rEnd = cellXml.indexOf('\'', rIdx + 3);
+        }
+        
+        int colIndex = 0;
+        if (rIdx != -1 && rEnd != -1) {
+            QString ref = QString::fromLatin1(cellXml.data() + rIdx + 3, rEnd - rIdx - 3);
+            ref.remove(QRegularExpression("[0-9]"));
+            colIndex = ExcelHandler::staticLetterToColumn(ref);
+        }
+        parsedCells.append({colIndex, cellXml});
+        pos = cellEnd;
+    }
+    
+    std::stable_sort(parsedCells.begin(), parsedCells.end(), [](const Cell& a, const Cell& b) {
+        return a.colIndex < b.colIndex;
+    });
+    
+    QByteArray out;
+    for (const Cell& c : parsedCells) {
+        out.append(c.xml);
+    }
+    out.append(extLstXml);
+    return out;
+}
+
 static QByteArray mergeSheetXml(const QByteArray& originalXml, const SheetData& changes)
 {
     if (originalXml.isEmpty() || changes.cells.isEmpty())
         return originalXml;
 
-    // Linear byte scan — O(n) single pass through the XML.
+    const QByteArray workingXml = originalXml;
+
+    // Linear byte scan  ” O(n) single pass through the XML.
     const QMap<QString, CellData>& changedCells = changes.cells;
     QByteArray output;
-    output.reserve(originalXml.size() + changedCells.size() * 64);
+    output.reserve(workingXml.size() + changedCells.size() * 64);
     QSet<QString> writtenCells; // track which changed cells were found in original XML
     QSet<QString> seenCells;    // track existing cells to drop duplicates
 
     int pos = 0;
-    const int len = originalXml.size();
+    const int len = workingXml.size();
 
     while (pos < len) {
         int cStart = -1;
         for (int i = pos; i < len - 1; ++i) {
-            if (originalXml[i] == '<' && originalXml[i+1] == 'c') {
-                char next = (i + 2 < len) ? originalXml[i+2] : 0;
+            if (workingXml[i] == '<' && workingXml[i+1] == 'c') {
+                char next = (i + 2 < len) ? workingXml[i+2] : 0;
                 if (next == ' ' || next == '\t' || next == '\r' || next == '\n' || next == '/' || next == '>') {
                     cStart = i;
                     break;
@@ -606,26 +759,26 @@ static QByteArray mergeSheetXml(const QByteArray& originalXml, const SheetData& 
             }
         }
         if (cStart == -1) {
-            output.append(originalXml.constData() + pos, len - pos);
+            output.append(workingXml.constData() + pos, len - pos);
             break;
         }
 
-        output.append(originalXml.constData() + pos, cStart - pos);
+        output.append(workingXml.constData() + pos, cStart - pos);
 
-        int tagEnd = originalXml.indexOf('>', cStart);
+        int tagEnd = workingXml.indexOf('>', cStart);
         if (tagEnd == -1) {
-            output.append(originalXml.constData() + cStart, len - cStart);
+            output.append(workingXml.constData() + cStart, len - cStart);
             break;
         }
 
-        bool selfClosing = (tagEnd > 0 && originalXml[tagEnd - 1] == '/');
-        int cEnd = selfClosing ? tagEnd + 1 : originalXml.indexOf("</c>", tagEnd + 1) + 4;
+        bool selfClosing = (tagEnd > 0 && workingXml[tagEnd - 1] == '/');
+        int cEnd = selfClosing ? tagEnd + 1 : workingXml.indexOf("</c>", tagEnd + 1) + 4;
         if (cEnd < 4) {
-            output.append(originalXml.constData() + cStart, len - cStart);
+            output.append(workingXml.constData() + cStart, len - cStart);
             break;
         }
 
-        QByteArray openTag = originalXml.mid(cStart, tagEnd - cStart + 1);
+        QByteArray openTag = workingXml.mid(cStart, tagEnd - cStart + 1);
         QString cellRef;
         int rIdx = openTag.indexOf("r=\"");
         if (rIdx != -1) {
@@ -659,6 +812,7 @@ static QByteArray mergeSheetXml(const QByteArray& originalXml, const SheetData& 
             if (writtenCells.size() <= 3)
                 qDebug() << "mergeSheetXml: replacing cell" << cellRef << "value=" << cell.value.left(30);
 
+            // Extract style attribute
             QString styleAttr;
             int sIdx = openTag.indexOf("s=\"");
             if (sIdx != -1) {
@@ -668,9 +822,44 @@ static QByteArray mergeSheetXml(const QByteArray& originalXml, const SheetData& 
                         QString::fromLatin1(openTag.constData() + sIdx + 3, sEnd - sIdx - 3));
             }
 
+            // Check if this is a shared formula cell  ” master (has ref=) or slave (no ref=).
+            // Master: <c ...><f t="shared" si="0" ref="U5:AY5">...</f><v>...</v></c>
+            // Slave:  <c ...><f t="shared" si="0"/><v>...</v></c>
+            // We must preserve the <f> element to avoid corrupting the shared formula group.
+            // Excel reports "Removed Records: Shared formula" if any cell in the group
+            // loses its t="shared"/si= attributes.
+            QByteArray fullCellXml;
+            if (!selfClosing) {
+                fullCellXml = workingXml.mid(cStart, cEnd - cStart);
+            }
+            const bool isSharedCell = !selfClosing &&
+                                      (fullCellXml.contains("t=\"shared\"") ||
+                                       fullCellXml.contains("t='shared'"));
+
             QString safeVal = escapeXmlValue(cell.value);
             QByteArray newCell;
-            if (cell.value.isEmpty() && cell.formula.isEmpty()) {
+            if (isSharedCell) {
+                // Preserve the shared formula <f> element byte-for-byte (master and slave).
+                // Only replace (or append) the <v> cached value.
+                QByteArray origCell = fullCellXml;
+                // Find existing <v>...</v> and replace it, or append before </c>
+                int vStart = origCell.indexOf("<v>");
+                int vEnd   = origCell.indexOf("</v>");
+                if (vStart != -1 && vEnd != -1) {
+                    newCell  = origCell.left(vStart);
+                    newCell += QString("<v>%1</v>").arg(safeVal).toUtf8();
+                    newCell += origCell.mid(vEnd + 4); // skip old </v>
+                } else {
+                    // No existing <v>  ” insert before </c>
+                    int closeC = origCell.lastIndexOf("</c>");
+                    if (closeC != -1) {
+                        newCell  = origCell.left(closeC);
+                        newCell += QString("<v>%1</v></c>").arg(safeVal).toUtf8();
+                    } else {
+                        newCell = origCell; // fallback  ” don't touch
+                    }
+                }
+            } else if (cell.value.isEmpty() && cell.formula.isEmpty()) {
                 newCell = QString("<c r=\"%1\"%2/>").arg(cellRef, styleAttr).toUtf8();
             } else if (cell.dataType == "str") {
                 newCell = QString("<c r=\"%1\"%2 t=\"inlineStr\"><is><t>%3</t></is></c>")
@@ -684,7 +873,12 @@ static QByteArray mergeSheetXml(const QByteArray& originalXml, const SheetData& 
             }
             output.append(newCell);
         } else {
-            output.append(originalXml.constData() + cStart, cEnd - cStart);
+            // UNCHANGED CELL  ” copy original XML byte-for-byte. Touch NOTHING.
+            // Shared formulas, array formulas, styles  ” all preserved exactly as-is.
+            // Do NOT strip shared formula attributes here  ” doing so mangles slave cells
+            // (which have no formula text) turning them into empty <f></f> garbage,
+            // causing the 14KB size loss and Excel's "Removed Records" repair dialog.
+            output.append(workingXml.constData() + cStart, cEnd - cStart);
         }
 
         pos = cEnd;
@@ -700,16 +894,11 @@ static QByteArray mergeSheetXml(const QByteArray& originalXml, const SheetData& 
     }
 
     if (!newCellsByRow.isEmpty()) {
-        // Find </sheetData> and inject new rows before it
-        int sdEnd = output.lastIndexOf("</sheetData>");
-        if (sdEnd == -1) sdEnd = output.size();
+        int sdStart = output.indexOf("<sheetData>");
+        if (sdStart == -1) sdStart = output.indexOf("<sheetData");
 
-        QByteArray newRows;
         for (auto rowIt = newCellsByRow.constBegin(); rowIt != newCellsByRow.constEnd(); ++rowIt) {
             int rowNum = rowIt.key();
-            // Check if this row already exists in output
-            QByteArray rowMarker = QString("r=\"%1\"").arg(rowNum).toUtf8();
-            bool rowExists = output.contains("<row " + rowMarker) || output.contains("<row\t" + rowMarker);
 
             QByteArray rowCells;
             for (auto colIt = rowIt.value().constBegin(); colIt != rowIt.value().constEnd(); ++colIt) {
@@ -735,31 +924,66 @@ static QByteArray mergeSheetXml(const QByteArray& originalXml, const SheetData& 
                 rowCells.append(cellXml);
             }
 
-            if (rowExists) {
-                // Insert cells before </row> for this row number
-                QByteArray closeRow = "</row>";
-                // Find the specific row tag and its close
-                int rowTagPos = output.indexOf("<row ");
-                while (rowTagPos != -1) {
-                    int rowTagEnd = output.indexOf('>', rowTagPos);
-                    if (output.mid(rowTagPos, rowTagEnd - rowTagPos + 1).contains(rowMarker)) {
-                        int rowClose = output.indexOf("</row>", rowTagEnd);
-                        if (rowClose != -1) {
-                            output.insert(rowClose, rowCells);
+            if (rowCells.isEmpty())
+                continue;
+
+            int sdEnd = output.lastIndexOf("</sheetData>");
+            if (sdEnd == -1) sdEnd = output.size();
+
+            int rowTagPos = -1;
+            int insertPos = sdEnd;
+            int scanPos = output.indexOf("<row ", sdStart);
+            while (scanPos != -1 && scanPos < sdEnd) {
+                int endTag = output.indexOf('>', scanPos);
+                if (endTag == -1) break;
+                
+                int rIdx = output.indexOf(" r=\"", scanPos);
+                if (rIdx == -1 || rIdx >= endTag) rIdx = output.indexOf("\tr=\"", scanPos);
+                if (rIdx == -1 || rIdx >= endTag) rIdx = output.indexOf("\nr=\"", scanPos);
+                
+                if (rIdx != -1 && rIdx < endTag) {
+                    int cEnd = output.indexOf('"', rIdx + 4);
+                    if (cEnd != -1) {
+                        int curRow = output.mid(rIdx + 4, cEnd - rIdx - 4).toInt();
+                        if (curRow == rowNum) {
+                            rowTagPos = scanPos;
+                            break;
+                        } else if (curRow > rowNum) {
+                            insertPos = scanPos;
+                            break;
                         }
-                        break;
                     }
-                    rowTagPos = output.indexOf("<row ", rowTagPos + 1);
+                }
+                scanPos = output.indexOf("<row ", endTag);
+            }
+
+            if (rowTagPos != -1) {
+                int rowTagEnd = output.indexOf('>', rowTagPos);
+                bool isSelfClosing = (rowTagEnd > 0 && output[rowTagEnd - 1] == '/');
+                
+                if (isSelfClosing) {
+                    QByteArray rowContent = sortCellsInRow(rowCells);
+                    QByteArray replacement = ">" + rowContent + "</row>";
+                    output.replace(rowTagEnd - 1, 2, replacement);
+                    sdEnd += replacement.size() - 2;
+                    sdEnd += replacement.size() - 2;
+                } else {
+                    int rowClose = output.indexOf("</row>", rowTagEnd);
+                    if (rowClose != -1) {
+                        QByteArray rowContent = output.mid(rowTagEnd + 1, rowClose - rowTagEnd - 1);
+                        rowContent.append(rowCells);
+                        rowContent = sortCellsInRow(rowContent);
+                        int oldSize = rowClose - rowTagEnd - 1;
+                        output.replace(rowTagEnd + 1, oldSize, rowContent);
+                        sdEnd += rowContent.size() - oldSize;
+                    }
                 }
             } else {
-                newRows.append(QString("<row r=\"%1\">").arg(rowNum).toUtf8());
-                newRows.append(rowCells);
-                newRows.append("</row>");
+                QByteArray newRow = QString("<row r=\"%1\">").arg(rowNum).toUtf8() + rowCells + "</row>";
+                output.insert(insertPos, newRow);
+                sdEnd += newRow.size();
+                sdEnd += newRow.size();
             }
-        }
-
-        if (!newRows.isEmpty()) {
-            output.insert(sdEnd, newRows);
         }
     }
 
@@ -930,7 +1154,7 @@ static bool repairDuplicateWorksheetRids(QByteArray& workbookXml, QByteArray& re
         // Safe/common case: exactly one worksheet relationship collides with something else (e.g. externalLink).
         if (ws.size() != 1) {
             qWarning() << "saveOpenXML: duplicate relationship Id rId" << oldNum
-                       << "has" << ws.size() << "worksheet entries — skipping repair";
+                       << "has" << ws.size() << "worksheet entries  ” skipping repair";
             continue;
         }
 
@@ -938,7 +1162,7 @@ static bool repairDuplicateWorksheetRids(QByteArray& workbookXml, QByteArray& re
         const int occurrences = sheetsBlock.count(needle);
         if (occurrences != 1) {
             qWarning() << "saveOpenXML: expected 1 sheet reference to" << needle
-                       << "but found" << occurrences << "— skipping repair";
+                       << "but found" << occurrences << " ” skipping repair";
             continue;
         }
 
@@ -992,14 +1216,14 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
     qDebug() << "saveOpenXML START" << filePath;
     qDebug() << "saveOpenXML: cached entries=" << wb.cachedZipEntries.size();
 
-    // Use cached ZIP entries if available — avoids re-opening the network file
+    // Use cached ZIP entries if available  ” avoids re-opening the network file
     // which can crash with 0xC0000005 on large xlsm files.
     QByteArray wbXmlRaw;
     if (!wb.cachedZipEntries.isEmpty()) {
         wbXmlRaw = wb.cachedZipEntries.value("xl/workbook.xml");
     } else {
         // Fallback: open network file (may crash on large files)
-        qWarning() << "saveOpenXML: no cached ZIP entries — falling back to network read";
+        qWarning() << "saveOpenXML: no cached ZIP entries  ” falling back to network read";
         QZipReader reader(wb.filePath);
         if (!reader.isReadable()) {
             qWarning() << "ExcelHandler::saveOpenXML: cannot open" << wb.filePath;
@@ -1009,22 +1233,47 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
     }
     qDebug() << "saveOpenXML: workbook.xml size=" << wbXmlRaw.size();
     qDebug() << "saveOpenXML [2] workbook.xml read OK";
-    // Strip corrupted #REF! definedNames that Excel accumulates over time.
-    // These have names like "\0" and point to #REF! — completely safe to remove.
-    // This runs on every save to prevent the 3MB bloat from recurring.
+    // Strip corrupted #REF! definedNames entries individually, preserving valid ones.
+    // These accumulate in workbooks over time and can cause repair dialogs if
+    // the entire block is removed (which also removes valid named ranges like print areas).
     {
         int dnStart = wbXmlRaw.indexOf("<definedNames>");
         int dnEnd   = wbXmlRaw.indexOf("</definedNames>");
         if (dnStart >= 0 && dnEnd > dnStart) {
             QByteArray block = wbXmlRaw.mid(dnStart + 14, dnEnd - dnStart - 14);
-            // Only strip if majority are #REF! entries (corrupted)
             int refCount  = block.count("#REF!");
             int nameCount = block.count("<definedName ");
-            if (nameCount > 0 && refCount * 2 >= nameCount) {
-                // More than 50% are #REF! — strip the whole block
-                wbXmlRaw.remove(dnStart, dnEnd - dnStart + 15);
-                qDebug() << "saveOpenXML: stripped" << nameCount
-                         << "corrupted definedNames entries (" << refCount << "#REF!)";
+
+            if (nameCount > 0 && refCount > 0) {
+                // Rebuild the block keeping only entries that do NOT contain #REF!
+                QByteArray cleaned;
+                int pos = 0;
+                int kept = 0, removed = 0;
+                while (pos < block.size()) {
+                    int entryStart = block.indexOf("<definedName ", pos);
+                    if (entryStart == -1) break;
+                    int entryEnd = block.indexOf("</definedName>", entryStart);
+                    if (entryEnd == -1) {
+                        // self-closing: <definedName ... />
+                        int sc = block.indexOf("/>", entryStart);
+                        if (sc == -1) break;
+                        entryEnd = sc + 2;
+                        QByteArray entry = block.mid(entryStart, entryEnd - entryStart);
+                        if (!entry.contains("#REF!")) { cleaned.append(entry); kept++; }
+                        else removed++;
+                        pos = entryEnd;
+                    } else {
+                        entryEnd += 14; // include </definedName>
+                        QByteArray entry = block.mid(entryStart, entryEnd - entryStart);
+                        if (!entry.contains("#REF!")) { cleaned.append(entry); kept++; }
+                        else removed++;
+                        pos = entryEnd;
+                    }
+                }
+                // Replace the block content with the cleaned version
+                wbXmlRaw.replace(dnStart + 14, dnEnd - dnStart - 14, cleaned);
+                qDebug() << "saveOpenXML: cleaned definedNames  ” kept:" << kept
+                         << "removed:" << removed << "#REF! entries";
             }
         }
     }
@@ -1033,8 +1282,8 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
     // We only modify it when new sheets are added (rare), by doing a targeted
     // QByteArray::replace("</sheets>", ...) which is safe on large buffers.
 
-    // Build sheetName → sheetIndex from workbook.xml.
-    // IMPORTANT: workbook.xml may be 3MB+ single-line XML — QXmlStreamReader crashes on it
+    // Build sheetName â†’ sheetIndex from workbook.xml.
+    // IMPORTANT: workbook.xml may be 3MB+ single-line XML  ” QXmlStreamReader crashes on it
     // (fixed-size line buffer overflow on newline-free XML, Qt known issue).
     // Solution: extract only the <sheets>...</sheets> block (~2KB) and parse with QRegularExpression.
     QMap<QString, int> nameToIdx;
@@ -1077,8 +1326,8 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
                  << "maxSheetId=" << maxSheetId << "maxRid=" << maxRid;
     }
 
-    // Only rewrite sheets that were actually modified — merge changes into original XML
-    QMap<QString, QByteArray> replacements; // zip path → new XML bytes
+    // Only rewrite sheets that were actually modified  ” merge changes into original XML
+    QMap<QString, QByteArray> replacements; // zip path â†’ new XML bytes
     QByteArray workbookXml = wbXmlRaw; // already read above (deduplicated)
     // Use cached entries where available, fall back to reading from ZIP if needed
     auto getEntry = [&](const QString& path) -> QByteArray {
@@ -1102,22 +1351,26 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
     repairDuplicateWorksheetRids(workbookXml, relsXml, maxRid);
 
     // relsXml and contentTypesXml are only written to replacements when new sheets are added.
-    // No deduplication needed — they are already clean from the source file.
+    // No deduplication needed  ” they are already clean from the source file.
 
-    // If any sheet has highlight rows, inject styles once
-    int blueXfIdx = -1, greyXfIdx = -1;
-    bool needsHighlight = !wb.highlightSourceRows.isEmpty();
-    QByteArray stylesXml;
-    if (needsHighlight) {
-        stylesXml = getEntry("xl/styles.xml");
-        if (!stylesXml.isEmpty()) {
-            auto [bi, gi] = injectHighlightStyles(stylesXml);
-            blueXfIdx = bi;
-            greyXfIdx = gi;
-            if (blueXfIdx >= 0)
-                replacements["xl/styles.xml"] = stylesXml;
-        }
+    // Clean currency symbols from styles globally
+    QByteArray stylesXml = getEntry("xl/styles.xml");
+    if (!stylesXml.isEmpty()) {
+        stylesXml.replace("\\ &quot;€&quot;", "");
+        stylesXml.replace("\\ &quot;£&quot;", "");
+        stylesXml.replace("\\ &quot;kn&quot;", "");
+        stylesXml.replace("\\ &quot;$&quot;", "");
+        stylesXml.replace("&quot;€&quot;", "");
+        stylesXml.replace("&quot;£&quot;", "");
+        stylesXml.replace("&quot;kn&quot;", "");
+        stylesXml.replace("&quot;$&quot;", "");
+        stylesXml.replace("€", "");
+        stylesXml.replace("£", "");
+        stylesXml.replace("$", "");
+        replacements["xl/styles.xml"] = stylesXml;
     }
+
+
 
     // Write all modified sheets + raw overrides
     QSet<QString> sheetsToWrite = QSet<QString>(wb.modifiedSheets.begin(), wb.modifiedSheets.end());
@@ -1146,7 +1399,7 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
             }
         }
 
-        // New sheet not in workbook yet — create a new sheet part
+        // New sheet not in workbook yet  ” create a new sheet part
         if (idx == -1 || zipPath.isEmpty()) {
             idx = ++maxSheetId;
             int newRid = ++maxRid;
@@ -1178,14 +1431,19 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
             QByteArray xml = wb.rawSheetOverrides.value(sheetName);
 
             // IMPORTANT: wb is const; QMap::operator[] on a const map returns a temporary copy.
-            // Never take begin()/end() from that temporary — it will crash/UB.
-            if (blueXfIdx >= 0 && greyXfIdx >= 0) {
-                auto rowsIt = wb.highlightSourceRows.constFind(sheetName);
-                if (rowsIt != wb.highlightSourceRows.constEnd()) {
-                    const QVector<int>& rows = rowsIt.value();
-                    const QSet<int> srcSet(rows.cbegin(), rows.cend());
-                    xml = applyRowHighlights(xml, srcSet, blueXfIdx, greyXfIdx);
-                }
+            // Never take begin()/end() from that temporary  ” it will crash/UB.
+            auto rowsIt = wb.highlightSourceRows.constFind(sheetName);
+            if (rowsIt != wb.highlightSourceRows.constEnd()) {
+                const QVector<int>& rows = rowsIt.value();
+                const QSet<int> srcSet(rows.cbegin(), rows.cend());
+                
+                // Fetch the latest aggregated styles.xml
+                QByteArray currStyles = replacements.contains("xl/styles.xml") ? replacements["xl/styles.xml"] : stylesXml;
+                
+                applyRowColorsHelper(xml, currStyles, srcSet);
+                
+                // Write the updated styles back into the replacement payload
+                replacements["xl/styles.xml"] = currStyles;
             }
 
             replacements.insert(zipPath, xml);
@@ -1201,7 +1459,7 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
         const SheetData& fullSheet = wb.sheets[sheetName];
 
         // Build a SheetData containing ONLY dirty cells (explicitly written via setCellValue/setCellFormula).
-        // The full sheet may have 100k+ cells from lazy loading — we must not merge all of them.
+        // The full sheet may have 100k+ cells from lazy loading  ” we must not merge all of them.
         SheetData changesOnly;
         changesOnly.name = sheetName;
         if (wb.dirtyCells.contains(sheetName)) {
@@ -1209,7 +1467,7 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
             for (const QString& ref : dirty) {
                 if (fullSheet.cells.contains(ref)) {
                     CellData cell = fullSheet.cells[ref];
-                    cell.formula = ""; // value was explicitly set — clear any loaded formula
+                    cell.formula = ""; // value was explicitly set  ” clear any loaded formula
                     changesOnly.cells.insert(ref, cell);
                 }
             }
@@ -1226,28 +1484,7 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
         } else {
             QByteArray merged = stripCellWatches(mergeSheetXml(originalXml, changesOnly));
 
-            // Dump ALL occurrences of JE10–JE17 for inspection
-            {
-                QFile dump("C:/Users/dposavac/Desktop/exceltransfer_JE10_dump.txt");
-                if (dump.open(QIODevice::WriteOnly)) {
-                    int searchPos = 0;
-                    int count = 0;
-                    while (searchPos < merged.size()) {
-                        int jePos = merged.indexOf("JE1", searchPos);
-                        if (jePos == -1) break;
-                        int start = qMax(0, jePos - 50);
-                        int len = qMin(200, merged.size() - start);
-                        dump.write(QByteArray("\n--- OCCURRENCE ") + QByteArray::number(++count) + QByteArray(" ---\n"));
-                        dump.write(merged.mid(start, len));
-                        searchPos = jePos + 1;
-                    }
-                    dump.write(QByteArray("\nTotal occurrences of JE1x: ") + QByteArray::number(count));
-                    dump.close();
-                    qDebug() << "[JE10 DUMP] Total JE1x occurrences:" << count;
-                }
-            }
-
-            // Deduplicate using regex (same pattern as diagnostic — guaranteed to catch all variants)
+            // Deduplicate using regex (same pattern as diagnostic  ” guaranteed to catch all variants)
             {
                 // Match ONLY actual <c r="..."> cell elements, not formula text or cellWatch
                 QRegularExpression cellRe("(?<![A-Za-z])<c\\s[^>]*r=([\"'])([A-Z]+[0-9]+)\\1[^>]*(?:/>|>.*?</c>)",
@@ -1267,11 +1504,49 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
                     QString out;
                     out.reserve(input.size());
                     int lastPos = 0, dupes = 0;
+                    
+                    QMap<QString, QString> preservedFormulas;
+                    for (int i = 0; i < matches.size(); ++i) {
+                        const auto& cm = matches[i];
+                        if (lastIdx[cm.ref] != i) {
+                            int fStart = cm.full.indexOf("<f ");
+                            if (fStart == -1) fStart = cm.full.indexOf("<f>");
+                            if (fStart != -1) {
+                                int fEnd = cm.full.indexOf("</f>", fStart);
+                                if (fEnd != -1) {
+                                    preservedFormulas[cm.ref] = cm.full.mid(fStart, fEnd - fStart + 4);
+                                } else {
+                                    int fSelfClose = cm.full.indexOf("/>", fStart);
+                                    if (fSelfClose != -1) {
+                                        preservedFormulas[cm.ref] = cm.full.mid(fStart, fSelfClose - fStart + 2);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     for (int i = 0; i < matches.size(); ++i) {
                         const auto& cm = matches[i];
                         out.append(input.mid(lastPos, cm.start - lastPos));
                         if (lastIdx[cm.ref] == i) {
-                            out.append(cm.full);
+                            QString finalCell = cm.full;
+                            if (preservedFormulas.contains(cm.ref)) {
+                                int vStart = finalCell.indexOf("<v>");
+                                if (vStart != -1) {
+                                    finalCell.insert(vStart, preservedFormulas[cm.ref]);
+                                } else {
+                                    int cEnd = finalCell.lastIndexOf("</c>");
+                                    if (cEnd != -1) {
+                                        finalCell.insert(cEnd, preservedFormulas[cm.ref]);
+                                    } else {
+                                        int cSelfClose = finalCell.lastIndexOf("/>");
+                                        if (cSelfClose != -1) {
+                                            finalCell = finalCell.mid(0, cSelfClose) + ">" + preservedFormulas[cm.ref] + "</c>";
+                                        }
+                                    }
+                                }
+                            }
+                            out.append(finalCell);
                         } else {
                             dupes++;
                             qWarning() << "[DUP CELL REMOVED]" << cm.ref;
@@ -1280,7 +1555,7 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
                     }
                     out.append(input.mid(lastPos));
                     if (dupes > 0) {
-                        qInfo() << "[DUP CELL] Removed" << dupes << "duplicates";
+                        qInfo() << "[DUP CELL] Removed" << dupes << "duplicates, salvaged" << preservedFormulas.size() << "formulas.";
                         merged = out.toUtf8();
                     }
                 }
@@ -1383,7 +1658,7 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
         QSet<QString> written;
 
         if (!wb.cachedZipEntries.isEmpty()) {
-            // Fast path: use cached ZIP entries — no network I/O at all
+            // Fast path: use cached ZIP entries  ” no network I/O at all
             qDebug() << "saveOpenXML: writing" << wb.cachedZipEntries.size() << "cached entries, replacements=" << replacements.size();
             int entryCount = 0;
             for (auto it = wb.cachedZipEntries.constBegin(); it != wb.cachedZipEntries.constEnd(); ++it) {
@@ -1472,29 +1747,34 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Public API — all OpenXML, no COM
-// ─────────────────────────────────────────────────────────────────────────────
+ //  Public API  ” all OpenXML, no COM
 
 bool ExcelHandler::loadWorkbook(const QString& filePath, const QString& key,
-                                const QSet<QString>& sheetsNeeded)
+                                const QSet<QString>& sheetsNeeded,
+                                QString* errorOut)
 {
     if (!QFile::exists(filePath)) {
+        if (errorOut) *errorOut = QString("File not found: %1").arg(filePath);
         qWarning() << "ExcelHandler::loadWorkbook: file not found:" << filePath;
         return false;
     }
 
-    // Parse outside the lock — each thread has its own QZipReader, fully safe
+    // Parse outside the lock  ” each thread has its own QZipReader, fully safe
     WorkbookData wb;
-    // Mark as save target if key ends with _cost_control — caches all ZIP entries upfront
+    // Mark as save target if key ends with _cost_control  ” caches all ZIP entries upfront
     // so saveOpenXML never needs to re-open the network file.
     wb.isSaveTarget = key.endsWith("_cost_control");
-    if (!loadOpenXML(filePath, wb, sheetsNeeded)) {
-        qWarning() << "ExcelHandler::loadWorkbook: OpenXML parse failed for" << filePath;
+    QString loadError;
+    if (!loadOpenXML(filePath, wb, sheetsNeeded, &loadError)) {
+        if (errorOut) *errorOut = loadError;
+        qWarning() << "ExcelHandler::loadWorkbook: OpenXML parse failed for" << filePath
+                   << ":" << loadError;
         return false;
     }
 
-    qDebug() << "ExcelHandler: loaded" << key << "—" << wb.sheetNames.size()
+    if (errorOut) errorOut->clear();
+
+    qDebug() << "ExcelHandler: loaded" << key << " ”" << wb.sheetNames.size()
              << "sheets (pre-loaded:" << wb.sheets.size() << ") from" << filePath;
 
     // Only lock for the map write
@@ -1526,7 +1806,7 @@ bool ExcelHandler::saveWorkbook(const QString& key, const QString& outputPath)
              << "filePath=" << m_workbooks[key].filePath
              << "modified=" << m_workbooks[key].modifiedSheets.size();
 
-    // Copy filePath out before taking reference — avoids any COW issues
+    // Copy filePath out before taking reference  ” avoids any COW issues
     const QString srcFilePath = m_workbooks[key].filePath;
     const QString dest = outputPath.isEmpty() ? srcFilePath : outputPath;
 
@@ -1547,6 +1827,9 @@ bool ExcelHandler::saveWorkbook(const QString& key, const QString& outputPath)
     if (ok) {
         if (m_workbooks.contains(key))
             m_workbooks[key].filePath = dest;
+
+        // PowerShell repair removed  ” no longer needed after shared formula
+        // stripping was fixed in the OpenXML merge pass.
     } else {
         qWarning() << "saveWorkbook failed for" << key << "->" << dest;
     }
@@ -1579,13 +1862,13 @@ bool ExcelHandler::recalcWithCOM(const QString& filePath, QString* errorOut)
 
     QAxObject excel("Excel.Application");
     if (excel.isNull()) {
-        QString err = "COM: Excel.Application not available — is Excel installed?";
+        QString err = "COM: Excel.Application not available  ” is Excel installed?";
         qWarning() << "[COM-RECALC]" << err;
         if (errorOut) *errorOut = err;
         return false;
     }
 
-    // Keep Excel hidden — no visible window
+    // Keep Excel hidden  ” no visible window
     excel.setProperty("Visible", false);
 
     // CRITICAL: suppress ALL alert/dialog popups including:
@@ -1627,7 +1910,7 @@ bool ExcelHandler::recalcWithCOM(const QString& filePath, QString* errorOut)
              << QVariant(0)         // Converter
              << QVariant(false)     // AddToMRU
              << QVariant(false)     // Local
-             << QVariant(2);        // CorruptLoad = xlRepairFile(2) — auto-repair, no dialog
+             << QVariant(2);        // CorruptLoad = xlRepairFile(2)  ” auto-repair, no dialog
 
         workbooks->dynamicCall("Open(QVariant&,QVariant&,QVariant&,QVariant&,QVariant&,"
                                "QVariant&,QVariant&,QVariant&,QVariant&,QVariant&,"
@@ -1637,7 +1920,7 @@ bool ExcelHandler::recalcWithCOM(const QString& filePath, QString* errorOut)
     }
 
     if (!wb || wb->isNull()) {
-        // Fallback: simple open — DisplayAlerts=false still suppresses dialogs
+        // Fallback: simple open  ” DisplayAlerts=false still suppresses dialogs
         qWarning() << "[COM-RECALC] Open with CorruptLoad failed, trying simple Open...";
         if (wb) delete wb;
         wb = workbooks->querySubObject("Open(const QString&)", filePath);
@@ -1661,7 +1944,7 @@ bool ExcelHandler::recalcWithCOM(const QString& filePath, QString* errorOut)
 
     qDebug() << "[COM-RECALC] Recalculation complete, saving...";
 
-    // Save — DisplayAlerts=false ensures no "save as xlsm?" dialog appears
+    // Save  ” DisplayAlerts=false ensures no "save as xlsm?" dialog appears
     wb->dynamicCall("Save()");
 
     qDebug() << "[COM-RECALC] Saved. Closing workbook...";
@@ -1673,6 +1956,131 @@ bool ExcelHandler::recalcWithCOM(const QString& filePath, QString* errorOut)
 
     qDebug() << "[COM-RECALC] Done for:" << filePath;
     return true;
+}
+
+bool ExcelHandler::repairAndSaveWithCOM(const QString& filePath, QString* errorOut)
+{
+    // Opens the file in hidden Excel with CorruptLoad=xlRepairFile(2) which silently
+    // accepts any repair dialog, then immediately saves and closes.
+    // This fixes shared formula XML inconsistencies written by our OpenXML patcher.
+    qDebug() << "[COM-REPAIR] Starting for:" << filePath;
+
+    QAxObject excel("Excel.Application");
+    if (excel.isNull()) {
+        QString err = "COM: Excel.Application not available  ” is Excel installed?";
+        qWarning() << "[COM-REPAIR]" << err;
+        if (errorOut) *errorOut = err;
+        return false;
+    }
+
+    excel.setProperty("Visible", false);
+    excel.setProperty("DisplayAlerts", false);
+    excel.setProperty("AutomationSecurity", 3);
+
+    QAxObject* workbooks = excel.querySubObject("Workbooks");
+    if (!workbooks) {
+        QString err = "COM: Could not access Workbooks collection";
+        if (errorOut) *errorOut = err;
+        excel.dynamicCall("Quit()");
+        return false;
+    }
+
+    QAxObject* wb = nullptr;
+    {
+        QList<QVariant> args;
+        args << QVariant(filePath) << QVariant(0) << QVariant(false)
+             << QVariant(5) << QVariant("") << QVariant("")
+             << QVariant(false) << QVariant(2) << QVariant("")
+             << QVariant(false) << QVariant(false) << QVariant(0)
+             << QVariant(false) << QVariant(false) << QVariant(2); // CorruptLoad=xlRepairFile
+
+        workbooks->dynamicCall("Open(QVariant&,QVariant&,QVariant&,QVariant&,QVariant&,"
+                               "QVariant&,QVariant&,QVariant&,QVariant&,QVariant&,"
+                               "QVariant&,QVariant&,QVariant&,QVariant&,QVariant&)", args);
+        wb = excel.querySubObject("ActiveWorkbook");
+    }
+
+    if (!wb || wb->isNull()) {
+        if (wb) delete wb;
+        wb = workbooks->querySubObject("Open(const QString&)", filePath);
+    }
+
+    if (!wb) {
+        QString err = QString("COM: Failed to open workbook: %1").arg(filePath);
+        if (errorOut) *errorOut = err;
+        excel.dynamicCall("Quit()");
+        return false;
+    }
+
+    wb->dynamicCall("Save()");
+    wb->dynamicCall("Close(bool)", false);
+    excel.dynamicCall("Quit()");
+
+    qDebug() << "[COM-REPAIR] Done for:" << filePath;
+    return true;
+}
+
+bool ExcelHandler::silentRepairWithPowerShell(const QString& filePath, QString* errorOut)
+{
+    // Find repair.ps1 next to the executable
+    QString scriptPath = QCoreApplication::applicationDirPath() + "/repair.ps1";
+    if (!QFile::exists(scriptPath)) {
+        scriptPath = QCoreApplication::applicationDirPath() + "/../repair.ps1";
+    }
+    if (!QFile::exists(scriptPath)) {
+        if (errorOut) *errorOut = "repair.ps1 not found next to executable";
+        qWarning() << "[REPAIR] repair.ps1 not found";
+        return false;
+    }
+
+    QStringList args;
+    args << "-NoProfile"
+         << "-NonInteractive"
+         << "-ExecutionPolicy" << "Bypass"
+         << "-File" << scriptPath
+         << "-FilePath" << QDir::toNativeSeparators(filePath);
+
+    QProcess process;
+    process.setProgram("powershell.exe");
+    process.setArguments(args);
+    process.setProcessChannelMode(QProcess::MergedChannels);
+
+    qInfo() << "[REPAIR] Launching PowerShell repair for:" << filePath;
+    
+    QThread::msleep(2000); // 2-second FS flush safety barrier
+
+    int maxAttempts = 3;
+    bool success = false;
+    for (int attempt = 0; attempt < maxAttempts; ++attempt) {
+        process.start();
+
+        if (!process.waitForFinished(120000)) {
+            process.kill();
+            if (errorOut) *errorOut = "PowerShell repair timed out (120s)";
+            qWarning() << "[REPAIR] Timed out";
+            return false;
+        }
+
+        QString output = QString::fromUtf8(process.readAll()).trimmed();
+        int exitCode = process.exitCode();
+
+        if (exitCode == 0 && output.contains("OK")) {
+            qInfo() << "[REPAIR] Success  ” file repaired and saved cleanly";
+            success = true;
+            break;
+        } else {
+            if (!output.contains("Unable to get the Open")) {
+                QString err = QString("PowerShell exit=%1: %2").arg(exitCode).arg(output);
+                if (errorOut) *errorOut = err;
+                qWarning() << "[REPAIR]" << err;
+                return false;
+            }
+            // If it IS "Unable to get the Open", sleep and loop
+            qWarning() << "[REPAIR] Attempt" << attempt + 1 << "locked. Retrying...";
+            QThread::msleep(3000);
+        }
+    }
+    return success;
 }
 
 bool ExcelHandler::isLoaded(const QString& key)
@@ -1689,13 +2097,13 @@ QStringList ExcelHandler::getSheetNames(const QString& key)
     return {};
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Cell read / write — pure in-memory on the loaded WorkbookData
-// ─────────────────────────────────────────────────────────────────────────────
+ //  Cell read / write  ” pure in-memory on the loaded WorkbookData
 
 QVariant ExcelHandler::getCellValue(const QString& key, const QString& sheetName, int row, int col)
 {
-    QWriteLocker locker(&m_lock); // write lock needed — getSheet may lazy-load
+    if (sheetName.trimmed().isEmpty() || !isValidCellAddress(row, col))
+        return QVariant();
+    QWriteLocker locker(&m_lock); // write lock needed  ” getSheet may lazy-load
     if (!m_workbooks.contains(key))
         return QVariant();
 
@@ -1714,6 +2122,10 @@ QVariant ExcelHandler::getCellValue(const QString& key, const QString& sheetName
 
 bool ExcelHandler::setCellValue(const QString& key, const QString& sheetName, int row, int col, const QVariant& value)
 {
+    if (sheetName.trimmed().isEmpty() || !isValidCellAddress(row, col)) {
+        qWarning() << "ExcelHandler::setCellValue: invalid cell target" << sheetName << row << col;
+        return false;
+    }
     QWriteLocker locker(&m_lock);
     if (!m_workbooks.contains(key))
         return false;
@@ -1746,6 +2158,10 @@ bool ExcelHandler::setCellValue(const QString& key, const QString& sheetName, in
 
 bool ExcelHandler::setCellFormula(const QString& key, const QString& sheetName, int row, int col, const QString& formula)
 {
+    if (sheetName.trimmed().isEmpty() || !isValidCellAddress(row, col)) {
+        qWarning() << "ExcelHandler::setCellFormula: invalid cell target" << sheetName << row << col;
+        return false;
+    }
     QWriteLocker locker(&m_lock);
     if (!m_workbooks.contains(key))
         return false;
@@ -1766,15 +2182,17 @@ bool ExcelHandler::setCellFormula(const QString& key, const QString& sheetName, 
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  transferData — fully in-memory, no COM (ported from Excel_transfer_23_3)
-// ─────────────────────────────────────────────────────────────────────────────
+ //  transferData  ” fully in-memory, no COM (ported from Excel_transfer_23_3)
 
 int ExcelHandler::transferData(const QString& srcKey, const QString& srcSheet, const QString& srcCol,
                                const QVector<int>& srcRows, const QString& destKey, const QString& destSheet,
                                const QString& destCol, const QVector<int>& destRows,
                                const QString& sourceFileType, bool divideBy1000)
 {
+    if (srcSheet.trimmed().isEmpty() || destSheet.trimmed().isEmpty()) {
+        qWarning() << "ExcelHandler::transferData: source/destination sheet name is empty";
+        return 0;
+    }
     QWriteLocker locker(&m_lock); // write because we modify destSheet
 
     if (!m_workbooks.contains(srcKey) || !m_workbooks.contains(destKey)) {
@@ -1836,12 +2254,21 @@ int ExcelHandler::transferData(const QString& srcKey, const QString& srcSheet, c
     const SheetData srcSheetCopy = srcSheetRef;
     dstSheet.name = destSheetName;
 
-    int srcColIdx  = letterToColumn(srcCol);
+        int srcColIdx  = letterToColumn(srcCol);
     int destColIdx = letterToColumn(destCol);
+    if (srcColIdx <= 0 || destColIdx <= 0) {
+        qWarning() << "ExcelHandler::transferData: invalid column mapping" << srcCol << destCol;
+        return 0;
+    }
     int transferred = 0;
 
 
-    for (int i = 0; i < srcRows.size(); ++i) {
+        for (int i = 0; i < srcRows.size(); ++i) {
+        if (!isValidCellAddress(srcRows[i], srcColIdx) || !isValidCellAddress(destRows[i], destColIdx)) {
+            qWarning() << "ExcelHandler::transferData: invalid row mapping index" << i
+                       << "srcRow" << srcRows[i] << "destRow" << destRows[i];
+            continue;
+        }
         QString srcRef  = buildCellRef(columnToLetter(srcColIdx), srcRows[i]);
         QString destRef = buildCellRef(columnToLetter(destColIdx), destRows[i]);
 
@@ -1852,17 +2279,17 @@ int ExcelHandler::transferData(const QString& srcKey, const QString& srcSheet, c
             if (!cellIt->value.isEmpty()) {
                 numVal = cellIt->value.toDouble(&isNum);
                 if (!isNum) {
-                    // Non-numeric string value — write 0 to dest (don't copy formula references)
+                    // Non-numeric string value  ” write 0 to dest (don't copy formula references)
                     isNum = true;
                     numVal = 0.0;
                 }
             } else {
-                // Cell exists but has no cached value (e.g. formula with no <v> tag) — use 0
+                // Cell exists but has no cached value (e.g. formula with no <v> tag)  ” use 0
                 isNum = true;
                 numVal = 0.0;
             }
         } else {
-            // Missing source cell — use 0
+            // Missing source cell  ” use 0
             isNum = true;
             numVal = 0.0;
         }
@@ -1870,7 +2297,7 @@ int ExcelHandler::transferData(const QString& srcKey, const QString& srcSheet, c
         CellData& dCell = dstSheet.cells[destRef];
         dCell.row     = destRows[i];
         dCell.col     = destColIdx;
-        dCell.formula.clear();  // never copy source formula — raw value only
+        dCell.formula.clear();  // never copy source formula  ” raw value only
 
         if (isNum) {
             if (divideBy1000) {
@@ -1879,6 +2306,10 @@ int ExcelHandler::transferData(const QString& srcKey, const QString& srcSheet, c
                     if (shouldDivide) {
                         numVal = numVal / 1000.0;
                     }
+                } else if (destRows[i] == 212 || destRows[i] == 216 || destRows[i] == 218 || destRows[i] == 214
+                           || destRows[i] == 222 || destRows[i] == 226) {
+                    // Rows 212-226 PAX/EUR section must not be sign-flipped
+                    numVal /= 1000.0;
                 } else {
                     numVal /= -1000.0;
                 }
@@ -1909,9 +2340,7 @@ int ExcelHandler::transferData(const QString& srcKey, const QString& srcSheet, c
     return transferred;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  copyData / copyFullSheet
-// ─────────────────────────────────────────────────────────────────────────────
+ //  copyData / copyFullSheet
 
 bool ExcelHandler::copyData(const QString& srcKey, const QString& srcSheet, const QString& srcCol,
                             const QVector<int>& srcRows, const QString& destKey, const QString& destSheet,
@@ -1970,151 +2399,8 @@ bool ExcelHandler::renameSheet(const QString& key, const QString& oldName, const
     return true;
 }
 
-// Apply dark blue (sourceRows) / light grey (all other rows) fill to row elements in sheet XML.
-// styleBlue and styleGrey are xf indices in the destination styles.xml.
-static QByteArray applyRowHighlights(const QByteArray& sheetXml,
-                                     const QSet<int>& sourceRows,
-                                     int styleBlue, int styleGrey)
-{
-    QByteArray out;
-    out.reserve(sheetXml.size() + sheetXml.size() / 4);
+// Apply dark blue (sourceRows) / light blue (all other rows) fill to row elements in sheet XML.
 
-    int pos = 0;
-    const int len = sheetXml.size();
-
-    while (pos < len) {
-        int rowStart = sheetXml.indexOf("<row ", pos);
-        if (rowStart == -1) {
-            out.append(sheetXml.constData() + pos, len - pos);
-            break;
-        }
-        out.append(sheetXml.constData() + pos, rowStart - pos);
-
-        // Find end of opening <row ...> tag
-        int tagEnd = sheetXml.indexOf('>', rowStart);
-        if (tagEnd == -1) {
-            out.append(sheetXml.constData() + rowStart, len - rowStart);
-            break;
-        }
-
-        QByteArray rowTag = sheetXml.mid(rowStart, tagEnd - rowStart + 1);
-
-        // Extract r="N" row number
-        int rIdx = rowTag.indexOf("r=\"");
-        int rowNum = -1;
-        if (rIdx != -1) {
-            int rEnd = rowTag.indexOf('"', rIdx + 3);
-            if (rEnd != -1)
-                rowNum = rowTag.mid(rIdx + 3, rEnd - rIdx - 3).toInt();
-        }
-
-        if (rowNum > 0) {
-            int styleIdx = sourceRows.contains(rowNum) ? styleBlue : styleGrey;
-
-            // Strip existing s="..." and customFormat="..." attrs
-            QByteArray clean = rowTag;
-            // Remove customFormat="..."
-            {
-                int cf = clean.indexOf("customFormat=\"");
-                if (cf != -1) {
-                    int cfEnd = clean.indexOf('"', cf + 14);
-                    if (cfEnd != -1) clean.remove(cf, cfEnd - cf + 1);
-                }
-            }
-            // Remove s="..." (only standalone, not inside another attr)
-            {
-                int si = clean.indexOf(" s=\"");
-                if (si != -1) {
-                    int siEnd = clean.indexOf('"', si + 4);
-                    if (siEnd != -1) clean.remove(si, siEnd - si + 1);
-                }
-            }
-
-            // Insert s="X" customFormat="1" before closing >
-            bool selfClose = clean.endsWith("/>");
-            QByteArray insert = QString(" s=\"%1\" customFormat=\"1\"").arg(styleIdx).toUtf8();
-            if (selfClose)
-                clean.insert(clean.size() - 2, insert);
-            else
-                clean.insert(clean.size() - 1, insert);
-
-            out.append(clean);
-        } else {
-            out.append(rowTag);
-        }
-
-        pos = tagEnd + 1;
-    }
-
-    return out;
-}
-
-// Append two fills+xfs to styles.xml and return {blueXfIdx, greyXfIdx}.
-// Returns {-1,-1} on failure. Safe to call even if fills/xfs already exist.
-static QPair<int,int> injectHighlightStyles(QByteArray& stylesXml)
-{
-    if (stylesXml.isEmpty()) return {-1,-1};
-
-    // ── Helper: read count="N" from a tag, return N and the byte range [countStart, countEnd]
-    // Returns -1 if not found.
-    auto readCount = [&](const QByteArray& tag) -> int {
-        int tagPos = stylesXml.indexOf(tag);
-        if (tagPos == -1) return -1;
-        int cc = stylesXml.indexOf("count=\"", tagPos);
-        if (cc == -1) return -1;
-        int ccEnd = stylesXml.indexOf('"', cc + 7);
-        if (ccEnd == -1) return -1;
-        bool ok = false;
-        int n = stylesXml.mid(cc + 7, ccEnd - cc - 7).toInt(&ok);
-        return ok ? n : -1;
-    };
-
-    auto updateCount = [&](const QByteArray& tag, int newCount) {
-        int tagPos = stylesXml.indexOf(tag);
-        if (tagPos == -1) return;
-        int cc = stylesXml.indexOf("count=\"", tagPos);
-        if (cc == -1) return;
-        int ccEnd = stylesXml.indexOf('"', cc + 7);
-        if (ccEnd == -1) return;
-        // replace count="OLD" with count="NEW"
-        stylesXml.replace(cc, ccEnd - cc + 1,
-            QString("count=\"%1\"").arg(newCount).toUtf8());
-    };
-
-    // ── 1. Inject fills ──────────────────────────────────────────────────
-    const QByteArray blueFill =
-        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF1F3864\"/><bgColor indexed=\"64\"/></patternFill></fill>";
-    const QByteArray greyFill =
-        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFD9D9D9\"/><bgColor indexed=\"64\"/></patternFill></fill>";
-
-    int fillCount = readCount("<fills ");
-    if (fillCount < 0) return {-1,-1};
-    int blueFillIdx = fillCount;
-    int greyFillIdx = fillCount + 1;
-
-    // Insert fills then update count (count tag comes BEFORE </fills>, so update first)
-    updateCount("<fills ", fillCount + 2);
-    stylesXml.replace("</fills>", blueFill + greyFill + "</fills>");
-
-    // ── 2. Inject xf entries into <cellXfs> ─────────────────────────────
-    int xfCount = readCount("<cellXfs");
-    if (xfCount < 0) return {-1,-1};
-    int blueXfIdx = xfCount;
-    int greyXfIdx = xfCount + 1;
-
-    QByteArray blueXf = QString(
-        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"%1\" borderId=\"0\" applyFill=\"1\"/>")
-        .arg(blueFillIdx).toUtf8();
-    QByteArray greyXf = QString(
-        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"%1\" borderId=\"0\" applyFill=\"1\"/>")
-        .arg(greyFillIdx).toUtf8();
-
-    // Update count before inserting (count tag comes before </cellXfs>)
-    updateCount("<cellXfs", xfCount + 2);
-    stylesXml.replace("</cellXfs>", blueXf + greyXf + "</cellXfs>");
-
-    return {blueXfIdx, greyXfIdx};
-}
 
 bool ExcelHandler::copyFullSheet(const QString& srcKey, const QString& srcSheet,
                                  const QString& destKey, const QString& newSheetName,
@@ -2123,120 +2409,336 @@ bool ExcelHandler::copyFullSheet(const QString& srcKey, const QString& srcSheet,
     QWriteLocker locker(&m_lock);
 
     if (!m_workbooks.contains(srcKey) || !m_workbooks.contains(destKey)) {
-        qWarning() << "ExcelHandler::copyFullSheet: workbook not found" << srcKey << destKey;
+        qWarning() << "[copyFullSheet] Missing workbook:" << srcKey << "or" << destKey;
         return false;
     }
 
     WorkbookData& src = m_workbooks[srcKey];
-
-    // Lazy-load if not cached — getSheet() assumes lock is held by caller
-    if (!src.sheets.contains(srcSheet)) {
-        if (!src.sheetPathMap.contains(srcSheet)) {
-            qWarning() << "ExcelHandler::copyFullSheet: sheet" << srcSheet
-                       << "not found in workbook" << srcKey
-                       << "— available:" << src.sheetPathMap.keys();
+    WorkbookData& dst = m_workbooks[destKey];
+    
+    QString targetName = newSheetName.isEmpty() ? srcSheet : newSheetName;
+    auto ensureZipCache = [](WorkbookData& wb, const QString& wbKey) -> bool {
+        if (!wb.cachedZipEntries.isEmpty())
+            return true;
+        if (wb.filePath.trimmed().isEmpty()) {
+            qWarning() << "[copyFullSheet] Empty workbook file path for key:" << wbKey;
             return false;
         }
-        // loadSheetLazy only reads the ZIP (no shared state) — safe under write lock
-        src.sheets[srcSheet] = loadSheetLazy(src, srcSheet);
-    }
 
-    // Raw XML copy (Option A)
-    QString targetName = newSheetName.isEmpty() ? srcSheet : newSheetName;
+        QZipReader zip(wb.filePath);
+        if (!zip.isReadable()) {
+            qWarning() << "[copyFullSheet] Unable to open ZIP for key:" << wbKey
+                       << "path:" << wb.filePath;
+            return false;
+        }
+        for (const QZipReader::FileInfo& fi : zip.fileInfoList()) {
+            if (!fi.isDir)
+                wb.cachedZipEntries[fi.filePath] = zip.fileData(fi.filePath);
+        }
+        qInfo() << "[copyFullSheet] Cached" << wb.cachedZipEntries.size()
+                << "entries for key:" << wbKey;
+        return !wb.cachedZipEntries.isEmpty();
+    };
 
-    WorkbookData& dst = m_workbooks[destKey];
-    for (auto it = dst.sheetNames.begin(); it != dst.sheetNames.end(); ) {
-        if (it->startsWith("Recovered_", Qt::CaseInsensitive))
-            it = dst.sheetNames.erase(it);
-        else
-            ++it;
-    }
-
-    QString srcPath = src.sheetPathMap.value(srcSheet);
-    if (srcPath.isEmpty()) {
-        qWarning() << "ExcelHandler::copyFullSheet: source path not found for" << srcSheet;
+    if (!ensureZipCache(src, srcKey) || !ensureZipCache(dst, destKey)) {
+        qWarning() << "[copyFullSheet] Required ZIP cache unavailable";
         return false;
     }
 
-    // Use cached ZIP entries if available — avoids re-opening the network file under lock
-    QByteArray rawXml;
-    if (!src.cachedZipEntries.isEmpty()) {
-        rawXml = src.cachedZipEntries.value(srcPath);
+    //    Step 1: Find source sheet path in ZIP
+    QString srcSheetPath = src.sheetPathMap.value(srcSheet);
+    if (srcSheetPath.isEmpty()) {
+        for (auto it = src.sheetPathMap.constBegin(); it != src.sheetPathMap.constEnd(); ++it) {
+            if (it.key().trimmed().compare(srcSheet.trimmed(), Qt::CaseInsensitive) == 0) {
+                srcSheetPath = it.value();
+                break;
+            }
+        }
+        if (srcSheetPath.isEmpty()) {
+            qWarning() << "[copyFullSheet] Source sheet not found:" << srcSheet;
+            return false;
+        }
+    }
+
+    // Normalize to ZIP-internal path (remove leading slash if present)
+    if (srcSheetPath.startsWith("/"))
+        srcSheetPath = srcSheetPath.mid(1);
+
+    if (!src.cachedZipEntries.contains(srcSheetPath)) {
+        qWarning() << "[copyFullSheet] Source sheet XML not in cache:" << srcSheetPath;
+        return false;
+    }
+
+    //    Step 2: Determine destination sheet path
+    QString dstSheetPath;
+    bool isNewSheet = false;
+    int dstSheetNum = 0;
+    
+    if (dst.sheetNames.contains(targetName) && dst.sheetPathMap.contains(targetName)) {
+        dstSheetPath = dst.sheetPathMap[targetName];
+        qInfo() << "[copyFullSheet] Overwriting existing sheet:" << targetName << "at" << dstSheetPath;
+        
+        // Extract the sheet number from the existing path (e.g., xl/worksheets/sheet3.xml)
+        QRegularExpression sheetNumRe("sheet(\\d+)\\.xml$", QRegularExpression::CaseInsensitiveOption);
+        QRegularExpressionMatch m = sheetNumRe.match(dstSheetPath);
+        if (m.hasMatch()) {
+            dstSheetNum = m.captured(1).toInt();
+        } else {
+            dstSheetNum = 999; // Fallback
+        }
     } else {
-        QZipReader zip(src.filePath);
-        rawXml = zip.fileData(srcPath);
-    }
-    if (rawXml.isEmpty()) {
-        qWarning() << "ExcelHandler::copyFullSheet: empty XML for" << srcSheet;
-        return false;
+        isNewSheet = true;
+        
+        // Find next available sheetN.xml in destination
+        int maxSheetNum = 0;
+        QRegularExpression sheetNumRe("sheet(\\d+)\\.xml$", QRegularExpression::CaseInsensitiveOption);
+        for (auto it = dst.cachedZipEntries.constBegin(); it != dst.cachedZipEntries.constEnd(); ++it) {
+            QRegularExpressionMatch m = sheetNumRe.match(it.key());
+            if (m.hasMatch()) {
+                maxSheetNum = qMax(maxSheetNum, m.captured(1).toInt());
+            }
+        }
+        dstSheetNum = maxSheetNum + 1;
+        dstSheetPath = QString("xl/worksheets/sheet%1.xml").arg(dstSheetNum);
     }
 
-    // Strip drawing references from sheet XML — drawings use relationship IDs that are
-    // only valid in the source workbook. Leaving them causes Excel to remove drawing shapes.
-    // Pattern: <drawing r:id="rId..."/> or <legacyDrawing r:id="rId..."/>
+    qInfo() << "[copyFullSheet]" << srcSheet << "->" << targetName
+            << "| src:" << srcSheetPath << "| dst:" << dstSheetPath;
+
+    //    Step 3: Copy sheet XML with shared string and style remapping
+    QByteArray sheetXml = src.cachedZipEntries[srcSheetPath];
+
+    // Merge styles (no-op if same workbook) and shared strings
+    MergeStylesResult styleResult = mergeStyles(src, dst);
+    mergeSharedStrings(src, dst, sheetXml);
+
+    // Only shift s= indices if copying from a different workbook
+    if (styleResult.valid && src.filePath != dst.filePath && styleResult.xfOffsetLightBlue > 0) {
+        QString sheetStr = QString::fromUtf8(sheetXml);
+        QRegularExpression sRe("\\bs=\"(\\d+)\"");
+        int adj = 0;
+        auto it = sRe.globalMatch(sheetStr);
+        while (it.hasNext()) {
+            auto m = it.next();
+            int pos = m.capturedStart(1) + adj;
+            int len = m.capturedLength(1);
+            int oldS = m.captured(1).toInt();
+            QString newS = QString::number(oldS + styleResult.xfOffsetLightBlue);
+            sheetStr.replace(pos, len, newS);
+            adj += newS.length() - len;
+        }
+        sheetXml = sheetStr.toUtf8();
+    }
+
+    // Do not copy sheet-level protection flags from source sheet.
     {
-        QByteArray stripped = rawXml;
-        // Remove <drawing .../> elements
-        QByteArray result;
-        int pos2 = 0;
-        while (pos2 < stripped.size()) {
-            int ds = stripped.indexOf("<drawing ", pos2);
-            if (ds == -1) { result.append(stripped.constData() + pos2, stripped.size() - pos2); break; }
-            result.append(stripped.constData() + pos2, ds - pos2);
-            int de = stripped.indexOf("/>", ds);
-            if (de == -1) { result.append(stripped.constData() + ds, stripped.size() - ds); break; }
-            pos2 = de + 2;
+        QString sheetXmlStr = QString::fromUtf8(sheetXml);
+        QRegularExpression sheetProtectionRe(
+            "<(?:\\w+:)?sheetProtection\\b[^>]*/>|"
+            "<(?:\\w+:)?sheetProtection\\b[^>]*>.*?</(?:\\w+:)?sheetProtection>",
+            QRegularExpression::DotMatchesEverythingOption | QRegularExpression::CaseInsensitiveOption
+        );
+        sheetXmlStr.remove(sheetProtectionRe);
+        sheetXml = sheetXmlStr.toUtf8();
+    }
+
+    //    Step 4: Copy sheet relationships (drawings, charts, comments, etc.)
+    // Source rels: xl/worksheets/_rels/sheet3.xml.rels
+    int srcLastSlash = srcSheetPath.lastIndexOf('/');
+    QString srcDir = srcSheetPath.left(srcLastSlash + 1);
+    QString srcFile = srcSheetPath.mid(srcLastSlash + 1);
+    QString srcRelsPath = srcDir + "_rels/" + srcFile + ".rels";
+
+    int dstLastSlash = dstSheetPath.lastIndexOf('/');
+    QString dstDir = dstSheetPath.left(dstLastSlash + 1);
+    QString dstFile = dstSheetPath.mid(dstLastSlash + 1);
+    QString dstRelsPath = dstDir + "_rels/" + dstFile + ".rels";
+
+    if (src.cachedZipEntries.contains(srcRelsPath)) {
+        QByteArray relsXml = src.cachedZipEntries[srcRelsPath];
+        QString relsStr = QString::fromUtf8(relsXml);
+
+        // Parse each relationship target and copy the referenced files
+        QRegularExpression relRe(
+            "<Relationship\\s[^>]*Target=\"([^\"]+)\"[^>]*Type=\"([^\"]+)\"[^/]*/>",
+            QRegularExpression::DotMatchesEverythingOption
+        );
+        QRegularExpressionMatchIterator relMatches = relRe.globalMatch(relsStr);
+
+        while (relMatches.hasNext()) {
+            QRegularExpressionMatch rm = relMatches.next();
+            QString relTarget = rm.captured(1);
+            QString relType = rm.captured(2);
+
+            // Skip external relationships (URLs, etc.)
+            if (relTarget.startsWith("http://") || relTarget.startsWith("https://")
+                || relTarget.startsWith("mailto:")) {
+                continue;
+            }
+
+            // Resolve absolute paths within ZIP
+            QString absSrc = resolveRelPath(srcDir, relTarget);
+            if (absSrc.isEmpty() || !src.cachedZipEntries.contains(absSrc)) {
+                qDebug() << "[copyFullSheet] Skipping missing rel target:" << relTarget
+                         << "resolved:" << absSrc;
+                continue;
+            }
+
+            // Generate unique destination path
+            QString newTarget = generateUniqueTarget(dst, srcDir, relTarget);  // Pass srcDir as baseDir
+            QString absDst = resolveRelPath(dstDir, newTarget);
+
+            // Copy the file into destination ZIP cache
+            dst.cachedZipEntries[absDst] = src.cachedZipEntries[absSrc];
+
+            // Register content type for known file types
+            registerContentType(dst, absDst, relType);
+
+            // Update relationship target in rels XML
+            relsStr.replace(
+                QString("Target=\"%1\"").arg(relTarget),
+                QString("Target=\"%1\"").arg(newTarget)
+            );
+
+            // Recursively copy sub-relationships (e.g. chart -> style, colors)
+            QSet<QString> visited;  // Track visited paths to prevent infinite recursion
+            copySubRels(src, dst, absSrc, absDst, &visited);
         }
-        rawXml = result;
 
-        // Remove <legacyDrawing .../> elements
-        result.clear(); pos2 = 0;
-        while (pos2 < rawXml.size()) {
-            int ds = rawXml.indexOf("<legacyDrawing ", pos2);
-            if (ds == -1) { result.append(rawXml.constData() + pos2, rawXml.size() - pos2); break; }
-            result.append(rawXml.constData() + pos2, ds - pos2);
-            int de = rawXml.indexOf("/>", ds);
-            if (de == -1) { result.append(rawXml.constData() + ds, rawXml.size() - ds); break; }
-            pos2 = de + 2;
+        // Store the updated rels file in destination
+        dst.cachedZipEntries[dstRelsPath] = relsStr.toUtf8();
+    }
+
+    //    Step 5: Store sheet XML in destination
+    // Use rawSheetOverrides so the save logic picks it up
+    dst.rawSheetOverrides[targetName] = sheetXml;
+    dst.cachedZipEntries[dstSheetPath] = sheetXml;
+
+    if (isNewSheet) {
+        //    Step 6: Register sheet in workbook.xml
+        int newSheetId = dstSheetNum + 100; // fallback
+        {
+            const QString wbXml = QString::fromUtf8(dst.cachedZipEntries.value("xl/workbook.xml"));
+            QRegularExpression sheetIdRe("sheetId=\"(\\d+)\"");
+            QRegularExpressionMatchIterator idIt = sheetIdRe.globalMatch(wbXml);
+            int maxSheetId = 0;
+            while (idIt.hasNext()) {
+                maxSheetId = qMax(maxSheetId, idIt.next().captured(1).toInt());
+            }
+            if (maxSheetId > 0)
+                newSheetId = maxSheetId + 1;
         }
-        rawXml = result;
-    }
+        QString rId = addWorkbookSheet(dst, targetName, newSheetId);
 
-    bool bypass = qEnvironmentVariableIsSet("EXCEL_BYPASS_SHARED_STRINGS");
-    QByteArray xmlToStore = bypass ? rawXml : convertSharedToInline(rawXml, src.sharedStrings);
-    if (bypass) {
-        qWarning() << "copyFullSheet: bypassing shared-strings conversion";
-    }
+        //    Step 7: Add workbook relationship
+        // xl/_rels/workbook.xml.rels
+        QString wbRelsPath = "xl/_rels/workbook.xml.rels";
+        if (dst.cachedZipEntries.contains(wbRelsPath)) {
+            QString wbRels = QString::fromUtf8(dst.cachedZipEntries[wbRelsPath]);
+            QString relEntry = QString(
+                "<Relationship Id=\"%1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet%2.xml\"/>")
+                .arg(rId).arg(dstSheetNum);
 
-    dst.rawSheetOverrides[targetName] = xmlToStore;
+            wbRels.replace("</Relationships>", relEntry + "</Relationships>");
+            dst.cachedZipEntries[wbRelsPath] = wbRels.toUtf8();
+        }
 
-    if (!highlightRows.isEmpty())
-        dst.highlightSourceRows[targetName] = highlightRows;
-    else
-        dst.highlightSourceRows.remove(targetName);
+        //    Step 8: Register in [Content_Types].xml
+        addContentType(dst, dstSheetPath,
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml");
 
-    if (!newSheetName.isEmpty()) {
-        // carry insert-after preference from mapping when copyFullSheet is used
-        // placeholder removed; insertAfter is set explicitly by transfer service
-    }
-
-    if (!dst.sheetNames.contains(targetName))
+        //    Step 9: Update sheetMap and sheetNames
+        dst.sheetPathMap[targetName] = dstSheetPath;
         dst.sheetNames.append(targetName);
+    }
 
+    // ── Step 10: Apply row colors using two-batch XF offsets ──
+    if (styleResult.valid && !highlightRows.isEmpty()) {
+        QSet<int> mappingRowSet(highlightRows.begin(), highlightRows.end());
+        applyRowColors(dst, dstSheetPath, mappingRowSet, 0, 0);
+    }
+    if (!highlightRows.isEmpty()) {
+        dst.highlightSourceRows[targetName] = highlightRows;
+    } else {
+        dst.highlightSourceRows.remove(targetName);
+    }
+
+    //    Step 11: Mark as modified
     dst.modifiedSheets.insert(targetName);
+
+    qInfo() << "[copyFullSheet] SUCCESS: copied" << srcSheet << "as" << targetName
+            << "(" << sheetXml.size() << "bytes,"
+            << (src.cachedZipEntries.contains(srcRelsPath) ? "with" : "no") << "relationships)";
 
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  File finders
-// ─────────────────────────────────────────────────────────────────────────────
+ //  Public wrapper for applying row colors
+
+bool ExcelHandler::applyRowColorsToSheet(const QString& key, const QString& sheetName, const QSet<int>& mappingRows)
+{
+    QWriteLocker locker(&m_lock);
+    
+    if (!m_workbooks.contains(key)) {
+        qWarning() << "[applyRowColorsToSheet] Workbook not loaded:" << key;
+        return false;
+    }
+    
+    WorkbookData& wb = m_workbooks[key];
+    QString sheetPath = wb.sheetPathMap.value(sheetName);
+    
+    if (sheetPath.isEmpty()) {
+        qWarning() << "[applyRowColorsToSheet] Sheet not found:" << sheetName;
+        return false;
+    }
+    
+    // Standalone call — create new style entries for coloring
+    // and overwrite all cell s= attributes directly (not offset-based)
+    QByteArray& stylesXml = wb.cachedZipEntries["xl/styles.xml"];
+    int darkBlueFillId    = appendFill(stylesXml, "FF1F4E79");
+    int lightBlueFillId   = appendFill(stylesXml, "FFBDD7EE");
+    int fontCount = 0;
+    QByteArray fonts = extractStyleSection(stylesXml, "fonts", fontCount);
+    fonts.append("<font><color rgb=\"FFFFFFFF\"/><sz val=\"11\"/><name val=\"Calibri\"/></font>");
+    replaceStyleSection(stylesXml, "fonts", fonts, fontCount + 1);
+    int darkBlueStyleIdx  = appendCellXf(stylesXml, fontCount,   darkBlueFillId,  0);
+    int lightBlueStyleIdx = appendCellXf(stylesXml, 0,           lightBlueFillId, 0);
+
+    // Overwrite all s= values directly (not offset-based) using a simple pass
+    QString sheetStr = QString::fromUtf8(wb.cachedZipEntries[sheetPath]);
+    QRegularExpression rowNumRe2("\\br=\"(\\d+)\"");
+    QRegularExpression sAttrRe2("\\bs=\"\\d+\"");
+    int curRow2 = 0, pos2 = 0;
+    QString out2; out2.reserve(sheetStr.size());
+    while (pos2 < sheetStr.size()) {
+        int nr = sheetStr.indexOf("<row ", pos2), nc = sheetStr.indexOf("<c ", pos2);
+        int nt = -1; bool ir = false;
+        if (nr != -1 && (nc == -1 || nr < nc)) { nt = nr; ir = true; }
+        else if (nc != -1) { nt = nc; }
+        if (nt == -1) { out2.append(sheetStr.mid(pos2)); break; }
+        out2.append(sheetStr.mid(pos2, nt - pos2));
+        int te = sheetStr.indexOf('>', nt);
+        if (te == -1) { out2.append(sheetStr.mid(nt)); break; }
+        QString tag = sheetStr.mid(nt, te - nt + 1);
+        if (ir) { auto rm = rowNumRe2.match(tag); if (rm.hasMatch()) curRow2 = rm.captured(1).toInt(); }
+        else {
+            int si = mappingRows.contains(curRow2) ? darkBlueStyleIdx : lightBlueStyleIdx;
+            if (sAttrRe2.match(tag).hasMatch()) tag.replace(sAttrRe2, QString("s=\"%1\"").arg(si));
+            else tag.insert(3, QString(" s=\"%1\"").arg(si));
+        }
+        out2.append(tag); pos2 = te + 1;
+    }
+    wb.cachedZipEntries[sheetPath] = out2.toUtf8();
+    return true;
+}
+
+ //  File finders
 
 QString ExcelHandler::findCostControlFile(const QString& basePath, const QString& month, int year)
 {
     QString monthNum = MONTH_TO_NUM.value(month, "01");
 
-    // Files must be in {base}/{year}/{monthNum}/test/ — no fallback
+    // Files must be in {base}/{year}/{monthNum}/test/  ” no fallback
     const QString testPath = QString("%1/%2/%3/test").arg(basePath).arg(year).arg(monthNum);
     QDir dir(testPath);
 
@@ -2323,7 +2825,7 @@ QString ExcelHandler::findPaxFile(const QString& basePath, const QString& month,
             return dir.absoluteFilePath(files.first());
     }
     qWarning() << "ExcelHandler::findPaxFile: no PAX file found in" << trafficDir
-               << "— files:" << dir.entryList(QDir::Files);
+               << " ” files:" << dir.entryList(QDir::Files);
     return QString();
 }
 
@@ -2344,3 +2846,749 @@ QString ExcelHandler::findStaffFile(const QString& basePath, int year)
     if (files.isEmpty()) return QString();
     return dir.absoluteFilePath(files.first());
 }
+
+
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  Enhanced copyFullSheet Helper Functions
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+QString ExcelHandler::resolveRelPath(const QString& basePath, const QString& relTarget)
+{
+    if (relTarget.startsWith("/")) {
+        return relTarget.mid(1); // absolute within ZIP
+    }
+    
+    // Handle "../" relative paths
+    QStringList baseParts = basePath.split("/", Qt::SkipEmptyParts);
+    QStringList relParts = relTarget.split("/", Qt::SkipEmptyParts);
+    
+    for (const QString& part : relParts) {
+        if (part == "..") {
+            if (!baseParts.isEmpty()) baseParts.removeLast();
+        } else {
+            baseParts.append(part);
+        }
+    }
+    
+    return baseParts.join("/");
+}
+
+QString ExcelHandler::generateUniqueTarget(WorkbookData& dst,
+                                          const QString& baseDir,
+                                          const QString& originalRelTarget)
+{
+    // Extract directory and extension
+    int lastSlash = originalRelTarget.lastIndexOf('/');
+    QString dir = (lastSlash >= 0) ? originalRelTarget.left(lastSlash + 1) : "";
+    QString filename = (lastSlash >= 0) ? originalRelTarget.mid(lastSlash + 1) : originalRelTarget;
+    
+    int dotPos = filename.lastIndexOf('.');
+    QString base = (dotPos >= 0) ? filename.left(dotPos) : filename;
+    QString ext = (dotPos >= 0) ? filename.mid(dotPos) : "";
+    
+    // Check if the target already exists in destination
+    QString candidate = originalRelTarget;
+    QString absCand = resolveRelPath(baseDir, candidate);  // Use actual base directory
+    int counter = 1;
+    
+    while (dst.cachedZipEntries.contains(absCand)) {
+        candidate = QString("%1%2_copy%3%4").arg(dir, base).arg(counter).arg(ext);
+        absCand = resolveRelPath(baseDir, candidate);
+        counter++;
+    }
+    
+    return candidate;
+}
+
+void ExcelHandler::copySubRels(WorkbookData& src, WorkbookData& dst,
+                               const QString& srcAbsPath, const QString& dstAbsPath,
+                               QSet<QString>* visited)
+{
+    // Prevent infinite recursion from circular references
+    QSet<QString> localVisited;
+    if (!visited) visited = &localVisited;
+    
+    if (visited->contains(srcAbsPath)) {
+        qDebug() << "[copySubRels] Circular reference detected, skipping:" << srcAbsPath;
+        return;
+    }
+    visited->insert(srcAbsPath);
+    
+    // Find the rels file for this path
+    // e.g. xl/charts/chart1.xml â†’ xl/charts/_rels/chart1.xml.rels
+    int lastSlash = srcAbsPath.lastIndexOf('/');
+    QString dir = srcAbsPath.left(lastSlash + 1);
+    QString file = srcAbsPath.mid(lastSlash + 1);
+    QString srcRels = dir + "_rels/" + file + ".rels";
+    
+    if (!src.cachedZipEntries.contains(srcRels)) {
+        return; // no sub-relationships
+    }
+    
+    // Build destination rels path
+    int dstLastSlash = dstAbsPath.lastIndexOf('/');
+    QString dstDir = dstAbsPath.left(dstLastSlash + 1);
+    QString dstFile = dstAbsPath.mid(dstLastSlash + 1);
+    QString dstRels = dstDir + "_rels/" + dstFile + ".rels";
+    
+    QByteArray relsXml = src.cachedZipEntries[srcRels];
+    QRegularExpression targetRe("Target=\"([^\"]+)\"");
+    QRegularExpressionMatchIterator matches = targetRe.globalMatch(QString::fromUtf8(relsXml));
+    
+    QString relsStr = QString::fromUtf8(relsXml);
+    
+    while (matches.hasNext()) {
+        QRegularExpressionMatch match = matches.next();
+        QString relTarget = match.captured(1);
+        QString absSrc = resolveRelPath(dir, relTarget);
+        
+        if (absSrc.isEmpty() || !src.cachedZipEntries.contains(absSrc)) {
+            continue;
+        }
+        
+        QString newTarget = generateUniqueTarget(dst, dir, relTarget);  // Pass dir as baseDir
+        QString absDst = resolveRelPath(dstDir, newTarget);
+        
+        dst.cachedZipEntries[absDst] = src.cachedZipEntries[absSrc];
+        relsStr.replace(
+            QString("Target=\"%1\"").arg(relTarget),
+            QString("Target=\"%1\"").arg(newTarget)
+        );
+        
+        // Recurse with visited set
+        copySubRels(src, dst, absSrc, absDst, visited);
+    }
+    
+    dst.cachedZipEntries[dstRels] = relsStr.toUtf8();
+}
+
+QVector<QString> ExcelHandler::parseSharedStringTable(const QByteArray& sstXml)
+{
+    QVector<QString> strings;
+    QString xml = QString::fromUtf8(sstXml);
+    
+    // Simple regex to extract <t> content from <si> elements
+    QRegularExpression siRe("<si>(.*?)</si>", QRegularExpression::DotMatchesEverythingOption);
+    QRegularExpressionMatchIterator it = siRe.globalMatch(xml);
+    
+    while (it.hasNext()) {
+        QRegularExpressionMatch match = it.next();
+        QString siContent = match.captured(1);
+        
+        // Extract <t> text
+        QRegularExpression tRe("<t[^>]*>(.*?)</t>", QRegularExpression::DotMatchesEverythingOption);
+        QRegularExpressionMatch tMatch = tRe.match(siContent);
+        
+        if (tMatch.hasMatch()) {
+            strings.append(tMatch.captured(1));
+        } else {
+            strings.append(""); // empty string entry
+        }
+    }
+    
+    return strings;
+}
+
+QByteArray ExcelHandler::buildSharedStringTable(const QVector<QString>& strings)
+{
+    QString xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>";
+    xml += QString("<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
+                  "count=\"%1\" uniqueCount=\"%1\">").arg(strings.size());
+    
+    for (const QString& str : strings) {
+        xml += "<si><t>" + str.toHtmlEscaped() + "</t></si>";
+    }
+    
+    xml += "</sst>";
+    return xml.toUtf8();
+}
+
+void ExcelHandler::mergeSharedStrings(WorkbookData& src, WorkbookData& dst, QByteArray& sheetXml)
+{
+    // Parse source shared strings
+    if (!src.cachedZipEntries.contains("xl/sharedStrings.xml")) {
+        return; // source has no shared strings
+    }
+    
+    // Ensure destination has shared strings table
+    if (!dst.cachedZipEntries.contains("xl/sharedStrings.xml")) {
+        dst.cachedZipEntries["xl/sharedStrings.xml"] =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            "<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
+            "count=\"0\" uniqueCount=\"0\"></sst>";
+    }
+    
+    // Build index map: source SST index â†’ destination SST index
+    QVector<QString> srcStrings = parseSharedStringTable(src.cachedZipEntries["xl/sharedStrings.xml"]);
+    QVector<QString> dstStrings = parseSharedStringTable(dst.cachedZipEntries["xl/sharedStrings.xml"]);
+    
+    // Build lookup for existing destination strings
+    QHash<QString, int> dstLookup;
+    for (int i = 0; i < dstStrings.size(); i++) {
+        dstLookup[dstStrings[i]] = i;
+    }
+    
+    QMap<int, int> indexRemap; // src index â†’ dst index
+    
+    for (int srcIdx = 0; srcIdx < srcStrings.size(); srcIdx++) {
+        const QString& str = srcStrings[srcIdx];
+        if (dstLookup.contains(str)) {
+            indexRemap[srcIdx] = dstLookup[str];
+        } else {
+            int newIdx = dstStrings.size();
+            dstStrings.append(str);
+            dstLookup[str] = newIdx;
+            indexRemap[srcIdx] = newIdx;
+        }
+    }
+    
+    // Rewrite shared string indices in the sheet XML
+    // More permissive regex to handle formulas and other elements between <c> and <v>
+    QString xmlStr = QString::fromUtf8(sheetXml);
+    QRegularExpression cellRe(
+        "<c\\b[^>]*\\bt=\"s\"[^>]*>(?:(?!</c>).)*<v>(\\d+)</v>",
+        QRegularExpression::DotMatchesEverythingOption
+    );
+    
+    QString result;
+    int lastEnd = 0;
+    QRegularExpressionMatchIterator it = cellRe.globalMatch(xmlStr);
+    
+    while (it.hasNext()) {
+        QRegularExpressionMatch m = it.next();
+        int vStart = m.capturedStart(1);
+        int vEnd = m.capturedEnd(1);
+        int srcIdx = m.captured(1).toInt();
+        
+        result += xmlStr.mid(lastEnd, vStart - lastEnd);
+        
+        if (indexRemap.contains(srcIdx)) {
+            result += QString::number(indexRemap[srcIdx]);
+        } else {
+            result += m.captured(1); // keep as-is
+        }
+        
+        lastEnd = vEnd;
+    }
+    result += xmlStr.mid(lastEnd);
+    
+    sheetXml = result.toUtf8();
+    
+    // Update destination shared strings XML
+    dst.cachedZipEntries["xl/sharedStrings.xml"] = buildSharedStringTable(dstStrings);
+}
+
+// Helper function to extract inner XML of a tag and its count
+QByteArray ExcelHandler::extractStyleSection(const QByteArray& stylesXml, const QString& tagName, int& count) {
+    count = 0;
+    QString startTagBase = QString("<%1").arg(tagName);
+    int tagStart = stylesXml.indexOf(startTagBase.toUtf8());
+    if (tagStart == -1) return QByteArray();
+    
+    // Extract count if present
+    int countAttr = stylesXml.indexOf("count=\"", tagStart);
+    int tagClose = stylesXml.indexOf(">", tagStart);
+    if (countAttr != -1 && countAttr < tagClose) {
+        int countEnd = stylesXml.indexOf('"', countAttr + 7);
+        if (countEnd != -1) {
+            count = stylesXml.mid(countAttr + 7, countEnd - countAttr - 7).toInt();
+        }
+    }
+    
+    QString endTag = QString("</%1>").arg(tagName);
+    int tagEnd = stylesXml.indexOf(endTag.toUtf8(), tagClose);
+    if (tagEnd == -1) return QByteArray();
+    
+    // Return just the inner XML
+    return stylesXml.mid(tagClose + 1, tagEnd - tagClose - 1);
+}
+
+// Replaces the <tagName ... count="X"> content with newInnerXml and updates count attribute
+void ExcelHandler::replaceStyleSection(QByteArray& stylesXml, const QString& tagName, const QByteArray& newInnerXml, int newCount) {
+    QString startTagBase = QString("<%1").arg(tagName);
+    int tagStart = stylesXml.indexOf(startTagBase.toUtf8());
+    if (tagStart == -1) return;
+    
+    int tagClose = stylesXml.indexOf(">", tagStart);
+    int countAttr = stylesXml.indexOf("count=\"", tagStart);
+    if (countAttr != -1 && countAttr < tagClose) {
+        int countEnd = stylesXml.indexOf('"', countAttr + 7);
+        if (countEnd != -1) {
+            stylesXml.replace(countAttr + 7, countEnd - countAttr - 7, QString::number(newCount).toUtf8());
+        }
+    }
+    
+    tagClose = stylesXml.indexOf(">", tagStart);
+    QString endTag = QString("</%1>").arg(tagName);
+    int tagEnd = stylesXml.indexOf(endTag.toUtf8(), tagClose);
+    if (tagEnd != -1) {
+        stylesXml.replace(tagClose + 1, tagEnd - tagClose - 1, newInnerXml);
+    }
+}
+
+ExcelHandler::MergeStylesResult ExcelHandler::mergeStyles(WorkbookData& src, WorkbookData& dst)
+{
+    MergeStylesResult result;
+    if (!src.cachedZipEntries.contains("xl/styles.xml") || !dst.cachedZipEntries.contains("xl/styles.xml")) return result;
+
+    if (src.filePath == dst.filePath) {
+        result.valid = true;
+        result.xfOffsetLightBlue = 0;
+        return result;
+    }
+
+    QByteArray srcStyles = src.cachedZipEntries["xl/styles.xml"];
+    QByteArray dstStyles = dst.cachedZipEntries["xl/styles.xml"];
+
+    int srcFontCount = 0, srcBorderCount = 0, srcXfCount = 0;
+    QByteArray srcFonts   = extractStyleSection(srcStyles, "fonts",   srcFontCount);
+    QByteArray srcBorders = extractStyleSection(srcStyles, "borders", srcBorderCount);
+    QByteArray srcCellXfs = extractStyleSection(srcStyles, "cellXfs", srcXfCount);
+    if (srcXfCount == 0) return result;
+
+    int dstFontCount = 0, dstBorderCount = 0, dstXfCount = 0;
+    QByteArray dstFonts   = extractStyleSection(dstStyles, "fonts",   dstFontCount);
+    QByteArray dstBorders = extractStyleSection(dstStyles, "borders", dstBorderCount);
+    QByteArray dstCellXfs = extractStyleSection(dstStyles, "cellXfs", dstXfCount);
+    const int fontOffset   = dstFontCount;
+    const int borderOffset = dstBorderCount;
+
+    QMap<int, int> numFmtRemap;
+    {
+        int srcNfCount = 0, dstNfCount = 0;
+        QByteArray srcNf = extractStyleSection(srcStyles, "numFmts", srcNfCount);
+        QByteArray dstNf = extractStyleSection(dstStyles, "numFmts", dstNfCount);
+        if (!srcNf.isEmpty()) {
+            int maxId = 163;
+            QRegularExpression idRe("numFmtId=\"(\\d+)\"");
+            auto idIt = idRe.globalMatch(QString::fromUtf8(dstNf));
+            while (idIt.hasNext()) { int id = idIt.next().captured(1).toInt(); if (id > maxId) maxId = id; }
+            QByteArray newEntries;
+            int nextId = maxId + 1;
+            QRegularExpression nfRe("<numFmt[^/]*/?>", QRegularExpression::DotMatchesEverythingOption);
+            auto nfIt = nfRe.globalMatch(QString::fromUtf8(srcNf));
+            while (nfIt.hasNext()) {
+                QString entry = nfIt.next().captured(0);
+                QRegularExpressionMatch idMatch = idRe.match(entry);
+                if (!idMatch.hasMatch()) continue;
+                int oldId = idMatch.captured(1).toInt();
+                if (oldId < 164) { numFmtRemap[oldId] = oldId; }
+                else { numFmtRemap[oldId] = nextId; entry.replace(QString("numFmtId=\"%1\"").arg(oldId), QString("numFmtId=\"%1\"").arg(nextId)); newEntries.append(entry.toUtf8()); nextId++; }
+            }
+            if (!newEntries.isEmpty()) { dstNf.append(newEntries); replaceStyleSection(dstStyles, "numFmts", dstNf, dstNfCount + (nextId - maxId - 1)); }
+        }
+    }
+
+    dstFonts.append(srcFonts);
+    dstBorders.append(srcBorders);
+    replaceStyleSection(dstStyles, "fonts",   dstFonts,   dstFontCount + srcFontCount);
+    replaceStyleSection(dstStyles, "borders", dstBorders, dstBorderCount + srcBorderCount);
+
+    auto shiftAttr = [](QString& xf, const QString& attr, int offset) {
+        QRegularExpression re(attr + "=\"(\\d+)\"");
+        int adj = 0; auto it = re.globalMatch(xf);
+        while (it.hasNext()) { auto m = it.next(); int pos = m.capturedStart(1)+adj; int len = m.capturedLength(1); QString nv = QString::number(m.captured(1).toInt()+offset); xf.replace(pos,len,nv); adj+=nv.length()-len; }
+    };
+
+    QString xfsStr = QString::fromUtf8(srcCellXfs);
+    QRegularExpression xfRe("<xf\\b[^>]*/?>(?:.*?</xf>)?", QRegularExpression::DotMatchesEverythingOption);
+    QByteArray mergedXfs;
+    auto xfIt = xfRe.globalMatch(xfsStr);
+    while (xfIt.hasNext()) {
+        QString xf = xfIt.next().captured(0);
+        shiftAttr(xf, "fontId",   fontOffset);
+        shiftAttr(xf, "borderId", borderOffset);
+        QRegularExpressionMatch m = QRegularExpression("numFmtId=\"(\\d+)\"").match(xf);
+        if (m.hasMatch()) { int oldId = m.captured(1).toInt(); if (numFmtRemap.contains(oldId)) xf.replace(m.capturedStart(1), m.capturedLength(1), QString::number(numFmtRemap[oldId])); }
+        mergedXfs.append(xf.toUtf8());
+    }
+
+    dstCellXfs.append(mergedXfs);
+    replaceStyleSection(dstStyles, "cellXfs", dstCellXfs, dstXfCount + srcXfCount);
+    dst.cachedZipEntries["xl/styles.xml"] = dstStyles;
+
+    result.valid = true;
+    result.xfOffsetLightBlue = dstXfCount;
+    result.srcXfCount = srcXfCount;
+    return result;
+}
+
+// Appends a solid fill with the given ARGB color to styles.xml
+// Returns the new fillId (0-based index)
+int ExcelHandler::appendFill(QByteArray& stylesXml, const QString& fgColorRgb)
+{
+    int fillCount = 0;
+    QByteArray existingFills = extractStyleSection(stylesXml, "fills", fillCount);
+    
+    QByteArray newFill = QString(
+        "<fill>"
+          "<patternFill patternType=\"solid\">"
+            "<fgColor rgb=\"%1\"/>"
+            "<bgColor indexed=\"64\"/>"
+          "</patternFill>"
+        "</fill>"
+    ).arg(fgColorRgb).toUtf8();
+    
+    existingFills.append(newFill);
+    replaceStyleSection(stylesXml, "fills", existingFills, fillCount + 1);
+    
+    return fillCount; // 0-based index of the new fill
+}
+
+// Appends a cellXf entry with given fontId, fillId, borderId
+// Returns the new style index (0-based)
+int ExcelHandler::appendCellXf(QByteArray& stylesXml, int fontId, int fillId, int borderId)
+{
+    int xfCount = 0;
+    QByteArray existingXfs = extractStyleSection(stylesXml, "cellXfs", xfCount);
+    
+    QByteArray newXf = QString(
+        "<xf numFmtId=\"0\" fontId=\"%1\" fillId=\"%2\" borderId=\"%3\" "
+        "xfId=\"0\" applyFill=\"1\" applyFont=\"1\" applyBorder=\"1\"/>"
+    ).arg(fontId).arg(fillId).arg(borderId).toUtf8();
+    
+    existingXfs.append(newXf);
+    replaceStyleSection(stylesXml, "cellXfs", existingXfs, xfCount + 1);
+    
+    return xfCount; // 0-based index of the new XF
+}
+
+// Build the mapping row set from JSON files
+QSet<int> ExcelHandler::buildMappingRowSet(const QString& mappingsPath, const QString& mappingsOldPath, const QString& targetSheetName)
+{
+    QSet<int> mappingRows;
+    
+    auto loadFromFile = [&](const QString& filePath) {
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            qWarning() << "[buildMappingRowSet] Cannot open:" << filePath;
+            return;
+        }
+        
+        QByteArray data = file.readAll();
+        file.close();
+        
+        QJsonParseError err;
+        QJsonDocument doc = QJsonDocument::fromJson(data, &err);
+        if (err.error != QJsonParseError::NoError) {
+            qWarning() << "[buildMappingRowSet] JSON parse error in" << filePath << ":" << err.errorString();
+            return;
+        }
+        
+        // Assuming structure is an array of mapping objects
+        QJsonArray arr = doc.array();
+        for (const QJsonValue& val : arr) {
+            QJsonObject obj = val.toObject();
+            
+            // Only include rows targeting our specific sheet
+            QString destSheet = obj.value("destination_sheet").toString();
+            if (!destSheet.isEmpty() && destSheet != targetSheetName) {
+                continue;
+            }
+            
+            int destRow = obj.value("destination_row").toInt(0);
+            if (destRow > 0) {
+                mappingRows.insert(destRow);
+            }
+            
+            // Also try "row" field as fallback
+            if (destRow == 0) {
+                destRow = obj.value("row").toInt(0);
+                if (destRow > 0) {
+                    mappingRows.insert(destRow);
+                }
+            }
+        }
+        
+        qInfo() << "[buildMappingRowSet] Loaded" << arr.size() << "entries from" << filePath
+                << ", matched" << mappingRows.size() << "rows for sheet" << targetSheetName;
+    };
+    
+    loadFromFile(mappingsPath);
+    loadFromFile(mappingsOldPath);
+    
+    return mappingRows;
+}
+
+// ── Static free-function versions for use by applyRowColorsHelper ──
+static QByteArray extractStyleSectionFree(const QByteArray& stylesXml, const QString& tagName, int& count) {
+    count = 0;
+    QString startTagBase = QString("<%1").arg(tagName);
+    int tagStart = stylesXml.indexOf(startTagBase.toUtf8());
+    if (tagStart == -1) return QByteArray();
+    int countAttr = stylesXml.indexOf("count=\"", tagStart);
+    int tagClose = stylesXml.indexOf(">", tagStart);
+    if (countAttr != -1 && countAttr < tagClose) {
+        int countEnd = stylesXml.indexOf('"', countAttr + 7);
+        if (countEnd != -1)
+            count = stylesXml.mid(countAttr + 7, countEnd - countAttr - 7).toInt();
+    }
+    QString endTag = QString("</%1>").arg(tagName);
+    int tagEnd = stylesXml.indexOf(endTag.toUtf8(), tagClose);
+    if (tagEnd == -1) return QByteArray();
+    return stylesXml.mid(tagClose + 1, tagEnd - tagClose - 1);
+}
+
+static void replaceStyleSectionFree(QByteArray& stylesXml, const QString& tagName, const QByteArray& newInnerXml, int newCount) {
+    QString startTagBase = QString("<%1").arg(tagName);
+    int tagStart = stylesXml.indexOf(startTagBase.toUtf8());
+    if (tagStart == -1) return;
+    int tagClose = stylesXml.indexOf(">", tagStart);
+    int countAttr = stylesXml.indexOf("count=\"", tagStart);
+    if (countAttr != -1 && countAttr < tagClose) {
+        int countEnd = stylesXml.indexOf('"', countAttr + 7);
+        if (countEnd != -1)
+            stylesXml.replace(countAttr + 7, countEnd - countAttr - 7, QString::number(newCount).toUtf8());
+    }
+    tagClose = stylesXml.indexOf(">", tagStart);
+    QString endTag = QString("</%1>").arg(tagName);
+    int tagEnd = stylesXml.indexOf(endTag.toUtf8(), tagClose);
+    if (tagEnd != -1)
+        stylesXml.replace(tagClose + 1, tagEnd - tagClose - 1, newInnerXml);
+}
+
+static void applyRowColorsHelper(QByteArray& sheetStr, QByteArray& stylesXml, const QSet<int>& mappingRows)
+{
+    // 1. Add light blue + dark blue fills
+    int fillCount = 0;
+    QByteArray fills = extractStyleSectionFree(stylesXml, "fills", fillCount);
+    int lightBlueFillId = fillCount;
+    int darkBlueFillId  = fillCount + 1;
+    fills.append("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFBDD7EE\"/><bgColor indexed=\"64\"/></patternFill></fill>");
+    fills.append("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF1F4E79\"/><bgColor indexed=\"64\"/></patternFill></fill>");
+    replaceStyleSectionFree(stylesXml, "fills", fills, fillCount + 2);
+
+    // 2. Add white font for dark blue rows
+    int fontCount = 0;
+    QByteArray fonts = extractStyleSectionFree(stylesXml, "fonts", fontCount);
+    int whiteFontId = fontCount;
+    fonts.append("<font><color rgb=\"FFFFFFFF\"/><sz val=\"11\"/><name val=\"Calibri\"/></font>");
+    replaceStyleSectionFree(stylesXml, "fonts", fonts, fontCount + 1);
+
+    // 3. Parse existing cellXfs into list
+    int xfCount = 0;
+    QByteArray cellXfsRaw = extractStyleSectionFree(stylesXml, "cellXfs", xfCount);
+    QStringList originalXfs;
+    QRegularExpression xfRe("<xf\\b[^>]*/?>(?:.*?</xf>)?", QRegularExpression::DotMatchesEverythingOption);
+    auto xfIt = xfRe.globalMatch(QString::fromUtf8(cellXfsRaw));
+    while (xfIt.hasNext()) originalXfs.append(xfIt.next().captured(0));
+
+    // Cache: <oldXfIndex, isDarkBlue> -> newXfIndex
+    QMap<QPair<int, bool>, int> styleCache;
+    int nextXfIndex = originalXfs.size();
+
+    // Helper: clone a style with new fill (and white font for dark rows)
+    auto getColoredXf = [&](int oldXf, bool isDark) -> int {
+        if (oldXf < 0 || oldXf >= originalXfs.size()) return oldXf;
+        QPair<int, bool> key(oldXf, isDark);
+        if (styleCache.contains(key)) return styleCache[key];
+        QString newXf = originalXfs.at(oldXf);
+        int fillId = isDark ? darkBlueFillId : lightBlueFillId;
+
+        auto safeSet = [](QString& xf, const QString& attr, int val) {
+            QRegularExpressionMatch m = QRegularExpression(attr + "=\"(\\d+)\"").match(xf);
+            if (m.hasMatch()) xf.replace(m.capturedStart(1), m.capturedLength(1), QString::number(val));
+            else if (xf.contains("/>")) xf.replace("/>", QString(" %1=\"%2\"/>").arg(attr).arg(val));
+            else xf.replace(">", QString(" %1=\"%2\">").arg(attr).arg(val));
+        };
+
+        safeSet(newXf, "fillId", fillId);
+        if (!newXf.contains("applyFill=")) {
+            if (newXf.contains("/>")) newXf.replace("/>", " applyFill=\"1\"/>");
+            else newXf.replace(">", " applyFill=\"1\">");
+        }
+        if (isDark) {
+            safeSet(newXf, "fontId", whiteFontId);
+            if (!newXf.contains("applyFont=")) {
+                if (newXf.contains("/>")) newXf.replace("/>", " applyFont=\"1\"/>");
+                else newXf.replace(">", " applyFont=\"1\">");
+            }
+        }
+        originalXfs.append(newXf);
+        styleCache[key] = nextXfIndex;
+        return nextXfIndex++;
+    };
+
+    // 4. Walk sheet XML and remap cell s= attributes
+    QString sheetStrQ = QString::fromUtf8(sheetStr);
+    QRegularExpression rowStartRe("<row\\b[^>]*\\br=\"(\\d+)\"");
+    QRegularExpression sAttrRe("\\bs=\"(\\d+)\"");
+    int currentRow = 0;
+    QString result;
+    result.reserve(sheetStrQ.size() + sheetStrQ.size() / 8);
+    int pos = 0;
+
+    while (pos < sheetStrQ.size()) {
+        int nextRow  = sheetStrQ.indexOf("<row ", pos);
+        int nextCell = sheetStrQ.indexOf("<c ",   pos);
+        int nextTag = -1; bool isRow = false;
+        if (nextRow != -1 && (nextCell == -1 || nextRow < nextCell)) { nextTag = nextRow;  isRow = true;  }
+        else if (nextCell != -1)                                       { nextTag = nextCell; isRow = false; }
+        if (nextTag == -1) { result.append(sheetStrQ.mid(pos)); break; }
+        result.append(sheetStrQ.mid(pos, nextTag - pos));
+        int tagEnd = sheetStrQ.indexOf('>', nextTag);
+        if (tagEnd == -1) { result.append(sheetStrQ.mid(nextTag)); break; }
+        QString tag = sheetStrQ.mid(nextTag, tagEnd - nextTag + 1);
+        if (isRow) {
+            QRegularExpressionMatch rm = rowStartRe.match(tag);
+            if (rm.hasMatch()) currentRow = rm.captured(1).toInt();
+        } else if (currentRow >= 8) {
+            // Only colorize body rows (>=8), protecting header rows 1-7
+            bool isDark = mappingRows.contains(currentRow);
+            QRegularExpressionMatch sm = sAttrRe.match(tag);
+            if (sm.hasMatch()) {
+                int oldS = sm.captured(1).toInt();
+                int newS = getColoredXf(oldS, isDark);
+                tag.replace(sm.capturedStart(1), sm.capturedLength(1), QString::number(newS));
+            } else {
+                int newS = getColoredXf(0, isDark);
+                tag.insert(3, QString(" s=\"%1\"").arg(newS));
+            }
+        }
+        result.append(tag);
+        pos = tagEnd + 1;
+    }
+
+    sheetStr = result.toUtf8();
+    
+    // 5. Write updated styles with new cloned XFs
+    if (nextXfIndex > xfCount) {
+        replaceStyleSectionFree(stylesXml, "cellXfs", originalXfs.join("").toUtf8(), nextXfIndex);
+    }
+}
+
+void ExcelHandler::applyRowColors(WorkbookData& dst, const QString& sheetPath,
+                                   const QSet<int>& mappingRows,
+                                   int /*xfOffsetLightBlue*/, int /*xfOffsetDarkBlue*/)
+{
+    if (!dst.cachedZipEntries.contains(sheetPath)) return;
+    if (!dst.cachedZipEntries.contains("xl/styles.xml")) return;
+
+    QByteArray sheetStr = dst.cachedZipEntries[sheetPath];
+    QByteArray stylesXml = dst.cachedZipEntries["xl/styles.xml"];
+    
+    applyRowColorsHelper(sheetStr, stylesXml, mappingRows);
+    
+    dst.cachedZipEntries[sheetPath] = sheetStr;
+    dst.cachedZipEntries["xl/styles.xml"] = stylesXml;
+}
+
+QVector<QString> ExcelHandler::parseCellXfs(const QByteArray& stylesXml)
+{
+    // TODO: Implement cellXfs parsing
+    return QVector<QString>();
+}
+
+int ExcelHandler::appendStyleSection(WorkbookData& src, WorkbookData& dst,
+                                     const QString& section, const QString& element)
+{
+    // TODO: Implement style section appending
+    return 0;
+}
+
+QString ExcelHandler::remapXfIndices(const QString& xfEntry, int fontsOffset,
+                                     int fillsOffset, int bordersOffset, int numFmtsOffset)
+{
+    // TODO: Implement XF index remapping
+    return xfEntry;
+}
+
+void ExcelHandler::rebuildStylesXml(WorkbookData& dst, const QVector<QString>& cellXfs)
+{
+    // TODO: Implement styles.xml rebuilding
+}
+
+void ExcelHandler::addContentType(WorkbookData& dst, const QString& partName, const QString& contentType)
+{
+    QString ctXml = QString::fromUtf8(dst.cachedZipEntries["[Content_Types].xml"]);
+    
+    // Check if already registered
+    if (ctXml.contains(QString("PartName=\"/%1\"").arg(partName))) {
+        return;
+    }
+    
+    // Insert before closing </Types>
+    QString entry = QString("<Override PartName=\"/%1\" ContentType=\"%2\"/>")
+                        .arg(partName, contentType);
+    
+    ctXml.replace("</Types>", entry + "</Types>");
+    dst.cachedZipEntries["[Content_Types].xml"] = ctXml.toUtf8();
+}
+
+QString ExcelHandler::addWorkbookSheet(WorkbookData& dst, const QString& sheetName, int sheetId)
+{
+    QString wbXml = QString::fromUtf8(dst.cachedZipEntries["xl/workbook.xml"]);
+    
+    // Find max existing rId to avoid collisions
+    QString wbRels = QString::fromUtf8(dst.cachedZipEntries["xl/_rels/workbook.xml.rels"]);
+    QRegularExpression ridRe("Id=\"rId(\\d+)\"");
+    QRegularExpressionMatchIterator matches = ridRe.globalMatch(wbRels);
+    int maxRid = 0;
+    while (matches.hasNext()) {
+        maxRid = qMax(maxRid, matches.next().captured(1).toInt());
+    }
+    
+    // Generate unique rId
+    QString rId = QString("rId%1").arg(maxRid + 1);
+    
+    // Insert before </sheets>
+    QString entry = QString("<sheet name=\"%1\" sheetId=\"%2\" r:id=\"%3\"/>")
+                        .arg(sheetName.toHtmlEscaped())
+                        .arg(sheetId)
+                        .arg(rId);
+    
+    wbXml.replace("</sheets>", entry + "</sheets>");
+    dst.cachedZipEntries["xl/workbook.xml"] = wbXml.toUtf8();
+    
+    return rId;
+}
+
+void ExcelHandler::addWorkbookRel(WorkbookData& dst, const QString& rId, const QString& target)
+{
+    QString relsXml = QString::fromUtf8(dst.cachedZipEntries["xl/_rels/workbook.xml.rels"]);
+    
+    QString entry = QString(
+        "<Relationship Id=\"%1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"%2\"/>")
+        .arg(rId, target);
+    
+    relsXml.replace("</Relationships>", entry + "</Relationships>");
+    dst.cachedZipEntries["xl/_rels/workbook.xml.rels"] = relsXml.toUtf8();
+}
+
+void ExcelHandler::registerContentType(WorkbookData& dst,
+                                       const QString& partPath,
+                                       const QString& relType)
+{
+    // Map relationship type URIs to content types
+    static const QMap<QString, QString> typeMap = {
+        {"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing",
+         "application/vnd.openxmlformats-officedocument.drawing+xml"},
+        {"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart",
+         "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"},
+        {"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet",
+         "application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml"},
+        {"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+         "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"},
+        {"http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing",
+         "application/vnd.openxmlformats-officedocument.vmlDrawing"},
+        {"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table",
+         "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"},
+        {"http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable",
+         "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"},
+        {"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+         ""},  // images use extension-based content types, handled by default entries
+    };
+    
+    for (auto it = typeMap.constBegin(); it != typeMap.constEnd(); ++it) {
+        if (relType.contains(it.key()) && !it.value().isEmpty()) {
+            addContentType(dst, partPath, it.value());
+            return;
+        }
+    }
+    
+    // Fallback: register based on file extension
+    if (partPath.endsWith(".xml")) {
+        addContentType(dst, partPath, "application/xml");
+    }
+}
+

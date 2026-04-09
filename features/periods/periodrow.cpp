@@ -18,7 +18,7 @@ PeriodRow::~PeriodRow() = default;
 void PeriodRow::buildUI()
 {
     setObjectName("periodRow");
-    setStyleSheet("#periodRow { background: #F8F9FC; border: 1px solid #E5E7EF; border-radius: 8px; }");
+    setStyleSheet("#periodRow { background: #F8F9FC; border: none; border-radius: 8px; }");
 
     m_layout->setContentsMargins(10, 10, 10, 10);
 

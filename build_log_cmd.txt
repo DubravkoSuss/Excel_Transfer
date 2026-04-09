@@ -1,0 +1,21 @@
+[1/12] Automatic MOC and UIC for target ExcelTransfer
+[2/12] Building CXX object CMakeFiles/ExcelTransfer.dir/core/mappingmodel.cpp.obj
+[3/12] Building CXX object CMakeFiles/ExcelTransfer.dir/features/periods/periodrow.cpp.obj
+[4/12] Building CXX object CMakeFiles/ExcelTransfer.dir/core/mappingcontroller.cpp.obj
+[5/12] Building CXX object CMakeFiles/ExcelTransfer.dir/features/mappings/mappingrow.cpp.obj
+[6/12] Building CXX object CMakeFiles/ExcelTransfer.dir/ui/ignorerowsdialog.cpp.obj
+FAILED: [code=1] CMakeFiles/ExcelTransfer.dir/ui/ignorerowsdialog.cpp.obj 
+C:\msys64\ucrt64\bin\c++.exe -DMINGW_HAS_SECURE_API=1 -DQT_AXCONTAINER_LIB -DQT_CONCURRENT_LIB -DQT_CORE_LIB -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -DWINVER=0x0A00 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN32_WINNT=0x0A00 -D_WIN64 -IC:/Users/dposavac/CLionProjects/Excel_transfer/cmake-build-debug/ExcelTransfer_autogen/include -isystem C:/msys64/ucrt64/include/qt6/QtCore -isystem C:/msys64/ucrt64/include/qt6 -isystem C:/msys64/ucrt64/share/qt6/mkspecs/win32-g++ -isystem C:/msys64/ucrt64/include/qt6/QtCore/6.10.1 -isystem C:/msys64/ucrt64/include/qt6/QtCore/6.10.1/QtCore -isystem C:/msys64/ucrt64/include/qt6/QtGui -isystem C:/msys64/ucrt64/include/qt6/QtWidgets -isystem C:/msys64/ucrt64/include/qt6/QtConcurrent -isystem C:/msys64/ucrt64/include/qt6/QtAxContainer -g -std=gnu++17 -fdiagnostics-color=always -MD -MT CMakeFiles/ExcelTransfer.dir/ui/ignorerowsdialog.cpp.obj -MF CMakeFiles\ExcelTransfer.dir\ui\ignorerowsdialog.cpp.obj.d -o CMakeFiles/ExcelTransfer.dir/ui/ignorerowsdialog.cpp.obj -c C:/Users/dposavac/CLionProjects/Excel_transfer/ui/ignorerowsdialog.cpp
+C:/Users/dposavac/CLionProjects/Excel_transfer/ui/ignorerowsdialog.cpp: In member function 'void IgnoreRowsDialog::setupUI()':
+C:/Users/dposavac/CLionProjects/Excel_transfer/ui/ignorerowsdialog.cpp:25:37: error: 'struct MappingEntry' has no member named 'sourceSheet'
+   25 |                        .arg(m_entry.sourceSheet, m_entry.destSheet));
+      |                                     ^~~~~~~~~~~
+C:/Users/dposavac/CLionProjects/Excel_transfer/ui/ignorerowsdialog.cpp:44:49: error: 'struct MappingEntry' has no member named 'sourceSheet'
+   44 |                                    .arg(m_entry.sourceSheet, m_entry.sourceColumn,
+      |                                                 ^~~~~~~~~~~
+[7/12] Building CXX object CMakeFiles/ExcelTransfer.dir/features/mappings/mappingpopup.cpp.obj
+[8/12] Building CXX object CMakeFiles/ExcelTransfer.dir/features/transfer/fillallworker.cpp.obj
+[9/12] Building CXX object CMakeFiles/ExcelTransfer.dir/features/transfer/loadworker.cpp.obj
+[10/12] Building CXX object CMakeFiles/ExcelTransfer.dir/ExcelTransfer_autogen/mocs_compilation.cpp.obj
+[11/12] Building CXX object CMakeFiles/ExcelTransfer.dir/ui/mainwindow.cpp.obj
+ninja: build stopped: subcommand failed.

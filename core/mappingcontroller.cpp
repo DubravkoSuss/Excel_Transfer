@@ -70,8 +70,10 @@ void MappingController::rebuildUI()
         return;
     }
 
-    for (const MappingItem& item : m_model->items()) {
-        m_counter++;
+    const QVector<MappingItem> modelItems = m_model->items();
+    for (int i = 0; i < modelItems.size(); ++i) {
+        const MappingItem& item = modelItems[i];
+        m_counter = i + 1;
         QVBoxLayout* targetLayout = m_costControlLayout ? m_costControlLayout : m_containerLayout;
         QWidget* parentWidget = targetLayout ? targetLayout->parentWidget() : nullptr;
         if (!parentWidget) {
@@ -80,7 +82,8 @@ void MappingController::rebuildUI()
         if (!parentWidget) {
             qWarning() << "MappingRow created without parent; check layout wiring";
         }
-        MappingRow* row = new MappingRow(m_counter, item.month, item.year, item.entry, parentWidget);
+        // MappingRow signals must use 0-based index because model/controller APIs are 0-based.
+        MappingRow* row = new MappingRow(i, item.month, item.year, item.entry, parentWidget);
         row->setWindowFlags(Qt::Widget);
         if (parentWidget && row->parent() != parentWidget) {
             row->setParent(parentWidget);
@@ -111,6 +114,7 @@ void MappingController::rebuildUI()
         connect(row, &MappingRow::editRowsClicked,     this, &MappingController::requestEditRows);
         connect(row, &MappingRow::exportRowMapClicked, this, &MappingController::requestExportRowMap);
         connect(row, &MappingRow::importRowMapClicked, this, &MappingController::requestImportRowMap);
+        connect(row, &MappingRow::ignoreRowsClicked, this, &MappingController::requestIgnoreRows);
         connect(row, &MappingRow::changed,             this, [this]() { emit rowChanged(); emit rowCountChanged(m_rows.size()); });
 
         if (targetLayout) {
@@ -182,4 +186,42 @@ void MappingController::setSectionLayouts(QVBoxLayout* costControl,
     if (!m_containerLayout && m_costControlLayout) {
         m_containerLayout = m_costControlLayout;
     }
+}
+
+void MappingController::updateEntryAt(int index, const MappingEntry& entry)
+{
+    if (m_model) {
+        m_model->updateEntryAt(index, entry);
+    }
+}
+
+void MappingController::syncRowToModel(int index)
+{
+    MappingRow* row = rowAt(index);
+    if (!row || !m_model) return;
+    
+    // ✅ Start from existing model entry to preserve all JSON fields
+    // (sourceFileType, sourcePath, rowMap, sourceJson, etc.)
+    MappingEntry updated = m_model->entryAt(index);
+    
+    // ✅ Patch only the fields the UI can modify
+    updated.ignoredDestRows = row->ignoredRows();
+    updated.copyFullSheet = row->isCopyFullSheet();
+    updated.customSheetName = row->getCustomSheetName();
+    updated.insertAfterSheet = row->getInsertAfterSheet();
+    
+    // Also sync the basic mapping fields that can be edited in UI
+    updated.sourceSheetTemplate = row->getSourceSheet();
+    updated.sourceColumn = row->getSourceColumn();
+    updated.sourceRows = row->getSourceRows();
+    updated.destSheet = row->getDestSheet();
+    updated.destColumn = row->getDestColumn();
+    updated.destRows = row->getDestRows();
+    
+    m_model->updateEntryAt(index, updated);
+    
+    qInfo() << "[MappingController] Synced row" << index << "to model"
+            << "| ignoredDestRows:" << updated.ignoredDestRows.size()
+            << "| sourceFileType:" << updated.sourceFileType
+            << "| preserved JSON fields";
 }

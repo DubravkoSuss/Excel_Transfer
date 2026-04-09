@@ -13,7 +13,7 @@ YearCard::YearCard(int year, QWidget* parent)
     setStyleSheet(
         "#yearCard {"
         "    background: #FFFFFF;"
-        "    border: 1px solid #D1D5DB;"
+        "    border: none;"
         "    border-radius: 10px;"
         "}"
     );
@@ -30,7 +30,7 @@ YearCard::YearCard(int year, QWidget* parent)
         "  background: #EEF2FF;"
         "  border-top-left-radius: 10px;"
         "  border-top-right-radius: 10px;"
-        "  border-bottom: 1px solid #C7D2FE;"
+        "  border-bottom: none;"
         "}"
     );
     QHBoxLayout* headerLayout = new QHBoxLayout(header);
@@ -75,11 +75,11 @@ YearCard::YearCard(int year, QWidget* parent)
     for (int q = 0; q < 4; ++q) {
         m_quarterBtns[q] = new QPushButton(qLabels[q]);
         m_quarterBtns[q]->setCheckable(true);
-        m_quarterBtns[q]->setFixedSize(34, 24);
+        m_quarterBtns[q]->setFixedSize(40, 26);
         m_quarterBtns[q]->setToolTip(QString("%1 — %2").arg(qLabels[q]).arg(qTips[q]));
         m_quarterBtns[q]->setStyleSheet(
-            "QPushButton { background: #F3F4F6; color: #374151; font-weight: 700; font-size: 10px; "
-            "  border-radius: 4px; border: 1px solid #D1D5DB; }"
+            "QPushButton { background: #F3F4F6; color: #374151; font-weight: 700; font-size: 11px; "
+            "  border-radius: 4px; border: 1px solid #D1D5DB; padding: 2px; }"
             "QPushButton:hover { background: #E0E7FF; border-color: #6366F1; }"
             "QPushButton:checked { background: #6366F1; color: white; border-color: #4F46E5; }"
         );
@@ -113,6 +113,7 @@ YearCard::YearCard(int year, QWidget* parent)
                 cb->setChecked(true);
     });
     headerLayout->addWidget(btnAll);
+    m_btnAll = btnAll;
 
     QPushButton* btnNone = new QPushButton("None");
     btnNone->setFixedHeight(24);
@@ -125,13 +126,33 @@ YearCard::YearCard(int year, QWidget* parent)
                 cb->setChecked(false);
     });
     headerLayout->addWidget(btnNone);
+    m_btnNone = btnNone;
 
-    // Show quarter buttons + All/None when toggled
+    // "Create Month Files" toggle button — activates file creation mode for this year
+    m_btnCreateFiles = new QPushButton("+ Create Files");
+    m_btnCreateFiles->setCheckable(true);
+    m_btnCreateFiles->setFixedHeight(24);
+    m_btnCreateFiles->setStyleSheet(
+        "QPushButton { background: #F3F4F6; color: #6D28D9; font-weight: 600; font-size: 10px; "
+        "  padding: 3px 8px; border-radius: 4px; border: 1px solid #DDD6FE; }"
+        "QPushButton:hover { background: #EDE9FE; border-color: #7C3AED; }"
+        "QPushButton:checked { background: #6D28D9; color: white; border-color: #5B21B6; }"
+    );
+    m_btnCreateFiles->setToolTip(QString("Activate file creation mode for %1 — select months then click Load").arg(year));
+    m_btnCreateFiles->setVisible(false);
+    connect(m_btnCreateFiles, &QPushButton::toggled, this, [this](bool active) {
+        emit createMonthFilesRequested(m_year, active);
+    });
+    headerLayout->addWidget(m_btnCreateFiles);
+    m_btnCreateFiles = m_btnCreateFiles; // already assigned above
+
+    // Show quarter buttons + All/None + Create Files when toggled
     connect(m_toggle, &QToolButton::toggled, this, [this, btnAll, btnNone](bool expanded) {
         for (int q = 0; q < 4; ++q)
             if (m_quarterBtns[q]) m_quarterBtns[q]->setVisible(expanded);
         btnAll->setVisible(expanded);
         btnNone->setVisible(expanded);
+        if (m_btnCreateFiles) m_btnCreateFiles->setVisible(expanded);
     });
 
     outerLayout->addWidget(header);
@@ -169,6 +190,24 @@ void YearCard::setExpanded(bool expanded)
     toggle(expanded);
 }
 
+void YearCard::deselectAllMonths()
+{
+    for (int i = 0; i < m_monthCheckboxes.size(); i++) {
+        if (m_monthCheckboxes[i]) {
+            m_monthCheckboxes[i]->setChecked(false);
+        }
+    }
+}
+
+void YearCard::selectMonth(int monthIndex)
+{
+    if (monthIndex >= 0 && monthIndex < m_monthCheckboxes.size()) {
+        if (m_monthCheckboxes[monthIndex]) {
+            m_monthCheckboxes[monthIndex]->setChecked(true);
+        }
+    }
+}
+
 void YearCard::applyQuarter(int quarter, bool select)
 {
     // Quarter month indices (0-based): Q1=0,1,2  Q2=3,4,5  Q3=6,7,8  Q4=9,10,11
@@ -192,12 +231,22 @@ void YearCard::addRow(PeriodRow* row)
 {
     m_rows.append(row);
     m_contentLayout->addWidget(row);
+    
+    // Populate month checkboxes for hybrid transfer
+    if (m_monthCheckboxes.isEmpty() && row) {
+        m_monthCheckboxes = row->monthCheckboxesInOrder();
+    }
 }
 
 void YearCard::removeRow(PeriodRow* row)
 {
     m_contentLayout->removeWidget(row);
     m_rows.removeOne(row);
+    
+    // Clear month checkboxes if all rows removed
+    if (m_rows.isEmpty()) {
+        m_monthCheckboxes.clear();
+    }
 }
 
 bool YearCard::isEmpty() const
@@ -214,4 +263,12 @@ void YearCard::toggle(bool checked)
 {
     m_content->setVisible(checked);
     m_toggle->setArrowType(checked ? Qt::DownArrow : Qt::RightArrow);
+    
+    // Update quarter buttons and All/None visibility
+    for (int q = 0; q < 4; ++q) {
+        if (m_quarterBtns[q]) m_quarterBtns[q]->setVisible(checked);
+    }
+    if (m_btnAll) m_btnAll->setVisible(checked);
+    if (m_btnNone) m_btnNone->setVisible(checked);
+    if (m_btnCreateFiles) m_btnCreateFiles->setVisible(checked);
 }

@@ -18,6 +18,10 @@ add_executable(ExcelTransfer
         ui/individualtransfertab.h
         ui/fillallmonthstab.cpp
         ui/fillallmonthstab.h
+        ui/hybridtransfertab.cpp
+        ui/hybridtransfertab.h
+        ui/customtabbar.cpp
+        ui/customtabbar.h
         services/excelhandler.cpp
         services/excelhandler.h
         services/breaklinks.cpp
@@ -42,6 +46,9 @@ add_executable(ExcelTransfer
         core/periodmodel.cpp
         core/periodmodel.h
         features/transfer/fillallmodels.h
+        features/transfer/hybridtransferconfig.h
+        features/transfer/hybridworker.cpp
+        features/transfer/hybridworker.h
         features/periods/periodrow.cpp
         features/periods/periodrow.h
         features/periods/yearcard.cpp
@@ -64,6 +71,8 @@ add_executable(ExcelTransfer
         features/transfer/individualtransferpanel.h
         ui/sheetcellselectordialog.cpp
         ui/sheetcellselectordialog.h
+        ui/ignorerowsdialog.cpp
+        ui/ignorerowsdialog.h
         ui/toastwidget.cpp
         ui/toastwidget.h
         resources.qrc
@@ -77,3 +86,8 @@ target_link_libraries(ExcelTransfer PRIVATE
         Qt6::Concurrent
         Qt6::AxContainer
 )
+
+# Link Windows DWM API for title bar customization
+if(WIN32)
+    target_link_libraries(ExcelTransfer PRIVATE dwmapi)
+endif()

@@ -21,6 +21,7 @@
 #include <QTabWidget>
 #include <QProgressBar>
 #include <QProgressDialog>
+#include <QPointer>
 #include <QDockWidget>
 #include <QTextEdit>
 #include <QScrollBar>
@@ -55,6 +56,7 @@
 #include <QJsonArray>
 #include <QPlainTextEdit>
 #include <QInputDialog>
+#include <QSplitter>
 
 #include "../services/excelhandler.h"
 #include "../services/breaklinks.h"
@@ -70,6 +72,7 @@
 #include "../core/periodmodel.h"
 #include "../features/transfer/individualtransferpanel.h"
 #include "../features/periods/yearcard.h"
+#include "../features/transfer/hybridtransferconfig.h"
 
 class MappingRow;
 class PeriodRow;
@@ -79,7 +82,13 @@ class MappingModel;
 class IndividualTransferPanel;
 class IndividualTransferTab;
 class FillAllMonthsTab;
+class MappingController;
+class HybridTransferTab;
+class HybridWorker;
+class CustomTabWidget;
 struct FillAllScanResult;
+
+
 class TransferSummaryDialog;
 class TransferWorker;
 class LoadWorker;
@@ -103,21 +112,34 @@ public slots:
     
     // Fill All tab slots (public so tab can connect)
     void onFillAllExecute(const FillAllScanResult& result);
+    void populateFillAllMappingCards(MappingController* controller,
+                                     const QString& month, int year);
+
+    
+    // Hybrid Transfer tab slots (public so tab can connect)
+    void onHybridExecute(const HybridTransferConfig& config);
+
+signals:
+    // Hybrid transfer signals
+    void transferFinished(bool success, const QString& summary);
+    void rollingTransferFinished(bool success, const QString& summary);
 
 private slots:
     // onGeneratePeriodRows() removed — period rows now auto-generate on year checkbox toggle
     void onClearPeriodRows();
     void onResetAll();          // Shows confirmation popup then calls doReset()
+    void onTabMoved(int from, int to);  // Save tab order when user moves tabs
 
 private:
     void doReset();             // Actual safe reset: disconnect → delete → reconnect
     void safeDisconnectAll();   // Disconnects MappingController, PeriodController, YearCards from MainWindow
     void reconnectSignals();    // Re-establishes those connections after reset
     void safeClearLayout(QLayout* layout); // Disconnect+delete all widgets in a layout
-    void onLoadSelectedPeriods();
-    void onExecuteAll();
-    void onRollingTransfer();
-    void onLoadRT();
+    void saveTabOrder();        // Save current tab order to QSettings
+    void restoreTabOrder();     // Restore tab order from QSettings
+    void onCreateMonthFile();
+    void onCreateMonthFilesMode(int year, bool active);
+    void onIgnoreRows(int index);
     void onStopTransfer();
     void onPauseTransfer();
     void onExportSelectedMonths();
@@ -154,6 +176,19 @@ public:
     QString findSapYtdFile(const QString& monthFolder, const QString& mm, int year);
     QString findTrafficFile(const QString& basePath, const QString& mm, int year);
     QString findStaffFile(int year);
+    
+    // Get loaded mappings for copying to other tabs
+    QVector<MappingItem> getLoadedMappings() const;
+    
+    // Hybrid transfer helper methods
+    void clearAllSelections();
+    void selectPeriod(const QString& month, int year);
+    
+    // Public methods for HybridWorker
+    void onLoadSelectedPeriods();
+    void onExecuteAll();
+    void onRollingTransfer();
+    void onLoadRT();
 
 private:
     void setupUI();
@@ -163,6 +198,11 @@ private:
     void createMappingsCard();
     void createIndividualTab();
     void createFillAllTab();
+    void createHybridTab();
+    
+#ifdef Q_OS_WIN
+    void customizeWindowsTitleBar();
+#endif
     
     void updateStatusBar(const QString& message);
     void showToast(const QString& message, ToastWidget::ToastType type = ToastWidget::Info, int duration = 3000);
@@ -234,10 +274,17 @@ private:
 
     QWidget* m_costControlContainer = nullptr;
     QVBoxLayout* m_costControlLayout = nullptr;
+    QSplitter* m_mainSectionsSplitter = nullptr;
+    QSplitter* m_selectorSectionsSplitter = nullptr;
+    QSplitter* m_horizontalSplitter = nullptr;  // ✅ NEW: Left sidebar / right content
+    QFrame* m_mappingsSidebar = nullptr;        // ✅ NEW: Collapsible left sidebar
+    QPushButton* m_btnToggleMappings = nullptr; // ✅ NEW: Show/hide sidebar button
     
-    QTabWidget* m_tabWidget = nullptr;
+    CustomTabWidget* m_tabWidget = nullptr;
     IndividualTransferTab* m_individualTransferTab = nullptr;
     FillAllMonthsTab* m_fillAllMonthsTab = nullptr;
+    HybridTransferTab* m_hybridTransferTab = nullptr;
+    HybridWorker* m_hybridWorker = nullptr;
     
     // m_btnGenerate removed — generate is now automatic on year checkbox toggle
     QPushButton* m_btnClear;
@@ -254,8 +301,15 @@ private:
     QProgressBar* m_progressBar;
     QProgressDialog* m_transferDialog = nullptr;
     QProgressDialog* m_rtDialog = nullptr;
+    QProgressDialog* m_fillAllDialog  = nullptr;
+    bool             m_fillAllRunning = false;
     QDockWidget* m_statusDock = nullptr;
     QTextEdit* m_statusText = nullptr;
+    QPushButton* m_btnToggleLog = nullptr;
+    bool m_createFilesMode = false;
+    int  m_createFilesYear = 0;
+    QString m_currentDestKey; // key of currently loaded cost_control workbook
+    QTimer* m_generatePeriodTimer = nullptr;
     QLabel* m_statusLabel;
     QStatusBar* m_statusBar;
     
@@ -291,6 +345,17 @@ private:
     QMutex m_transferMutex;
     bool m_isLoadingPeriods = false;
     bool m_isLoadingRT = false;
+
+    // ── Global busy guard ──────────────────────────────────────────────────
+    // Returns true if ANY background operation is running (transfer, load, fill all, RT)
+    bool isBusy() const {
+        return m_isTransferRunning || m_isLoadingPeriods
+            || m_isLoadingRT || m_fillAllRunning;
+    }
+    // Call at the top of every UI slot that should be blocked during transfers.
+    // Shows a status message and returns true if busy (caller should return immediately).
+    bool guardBusy(const QString& action = QString());
+    QTimer* m_busyTimeout = nullptr;
     
     int m_transferTotalMappings;
     int m_transferSuccessfulMappings;
@@ -298,7 +363,7 @@ private:
     
     int m_currentEditMappingIndex;
     
-    ToastWidget* m_toastWidget;
+    QPointer<ToastWidget> m_toastWidget;
     
     static const QString PASSWORD;
     static const QString DEFAULT_SOURCE_FOLDER;

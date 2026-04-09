@@ -23,6 +23,32 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
         return result;
     }
 
+    // ── Copy Full Sheet ─────────────────────────────────────────────────────
+    // If the mapping card has "Copy full sheet" checked, copy the entire source
+    // sheet XML into the destination workbook instead of doing a row transfer.
+    if (entry.copyFullSheet) {
+        const QString srcKey   = QString("%1_%2_%3")
+                                     .arg(entry.month, QString::number(year),
+                                          entry.sourceFileType);
+        const QString srcSheet = entry.sourceSheetTemplate;
+        const QString newName  = entry.customSheetName.isEmpty()
+                                 ? srcSheet : entry.customSheetName;
+
+        qInfo() << "[COPY_SHEET] Copying sheet" << srcSheet
+                << "from" << srcKey << "→" << destKey << "as" << newName;
+
+        bool ok = m_handler->copyFullSheet(srcKey, srcSheet, destKey, newName);
+        if (!ok) {
+            result.error = QString("copyFullSheet failed: %1 → %2").arg(srcSheet, newName);
+            qWarning() << result.error;
+        } else {
+            if (!entry.insertAfterSheet.isEmpty())
+                m_handler->setInsertAfter(destKey, newName, entry.insertAfterSheet);
+            result.cellsTransferred = 1;
+        }
+        return result;
+    }
+
     // Use entry.month if set, otherwise derive from destKey (format: "Month_year_cost_control")
     QString month = entry.month;
     if (month.isEmpty()) {
@@ -79,32 +105,70 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
         srcFilePath = m_handler->findCostControlFile(baseFolder, month, year);
     }
 
-    // Only load if not already in cache (prevents redundant ZIP extractions)
-    if (srcFilePath.isEmpty()) {
-        qWarning() << "Source file missing for" << sourceFileType << "(" << month << year << ")";
-    } else if (!m_handler->isLoaded(srcKey)) {
-        m_handler->loadWorkbook(srcFilePath, srcKey);
+    // Allow callers (Fill All / Execute All preflight) to override source path.
+    if (!entry.sourcePath.trimmed().isEmpty()) {
+        srcFilePath = entry.sourcePath;
     }
 
-    if (!entry.rowMap.isEmpty()) {
-        auto resolveSheet = [&](const QString& key, const QString& requested) {
-            if (requested.isEmpty()) return requested;
-            QString requestedNorm = requested.trimmed().toLower();
-            for (const QString& name : m_handler->getSheetNames(key)) {
-                if (name.trimmed().toLower() == requestedNorm) {
-                    return name;
+    // Only load if not already in cache (prevents redundant ZIP extractions)
+    if (srcFilePath.isEmpty()) {
+        result.error = QString("Source file missing for %1 (%2 %3)")
+                           .arg(sourceFileType, month)
+                           .arg(year);
+        qWarning() << result.error;
+        return result;
+    } else if (!m_handler->isLoaded(srcKey)) {
+        QString loadError;
+        if (!m_handler->loadWorkbook(srcFilePath, srcKey, {}, &loadError)) {
+            if (loadError.isEmpty()) {
+                loadError = "unknown workbook load error";
+            }
+            result.error = QString("Failed to load source workbook: %1 (%2)")
+                               .arg(srcFilePath, loadError);
+            qWarning() << result.error;
+            return result;
+        }
+    }
+
+    auto resolveSheet = [&](const QString& key, const QString& requested) {
+        if (requested.isEmpty()) return requested;
+        QString requestedNorm = requested.trimmed().toLower();
+        for (const QString& name : m_handler->getSheetNames(key)) {
+            if (name.trimmed().toLower() == requestedNorm) {
+                return name;
+            }
+        }
+
+        // Smart fallback: If the requested sheet is "Report" but the SAP file uses the "MM_YYYY" sheet name format
+        if (requestedNorm == "report") {
+            QString monthNum = ExcelHandler::MONTH_TO_NUM.value(month, "");
+            if (!monthNum.isEmpty()) {
+                QString altName = QString("%1_%2").arg(monthNum).arg(year);
+                for (const QString& name : m_handler->getSheetNames(key)) {
+                    if (name.trimmed().toLower() == altName.toLower()) {
+                        qInfo() << "TransferService: Found alternate sheet name" << altName << "instead of" << requested;
+                        return name;
+                    }
                 }
             }
-            const QStringList names = m_handler->getSheetNames(key);
-            if (!names.isEmpty()) {
-                qWarning() << "TransferService: sheet" << requested << "not found in" << key
-                           << "— falling back to" << names.first();
-                return names.first();
-            }
-            return requested;
-        };
+        }
 
-        const QString sourceSheet = resolveSheet(srcKey, entry.sourceSheetTemplate);
+        const QStringList names = m_handler->getSheetNames(key);
+        if (!names.isEmpty()) {
+            qWarning() << "TransferService: sheet" << requested << "not found in" << key
+                       << "— falling back to" << names.first();
+            return names.first();
+        }
+        return requested;
+    };
+
+    // Resolve {year} placeholder in source sheet template (e.g. "{year} FTE" → "2025 FTE")
+    QString sourceSheetTemplate = entry.sourceSheetTemplate;
+    sourceSheetTemplate.replace("{year}", QString::number(year));
+    sourceSheetTemplate.replace("{year-1}", QString::number(year - 1));
+    const QString sourceSheet = resolveSheet(srcKey, sourceSheetTemplate);
+
+    if (!entry.rowMap.isEmpty()) {
         QString destSheet = entry.destSheet;
         if (sourceFileType == "traffic_mott") {
             // Ensure destination sheet exists in cost_control; do not create new sheets
@@ -155,12 +219,14 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
             const QVector<int>& srcRowList = it.value();
             if (srcRowList.isEmpty()) continue;
 
+            // Skip rows the user has marked to ignore
+            if (entry.ignoredDestRows.contains(destRow)) continue;
+
             double total = 0.0;
             for (int srcRow : srcRowList) {
                 QVariant value = m_handler->getCellValue(srcKey, sourceSheet, srcRow, sourceColIndex);
-                if (value.canConvert<double>()) {
+                if (value.canConvert<double>())
                     total += value.toDouble();
-                }
             }
 
             bool shouldDivide = divideBy1000;
@@ -170,89 +236,23 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
                     if (paxDivide) {
                         total /= 1000.0;
                     }
-                } else if (sourceFileType == "sap_ytd" && (destRow == 212 || destRow == 216)) {
+                } else if ((sourceFileType == "sap" || sourceFileType == "sap_ytd")
+                           && (destRow == 212 || destRow == 216 || destRow == 218 || destRow == 214
+                               || destRow == 222 || destRow == 226)) {
+                    // Rows 212-226 PAX/EUR section must not be sign-flipped
                     total /= 1000.0;
                 } else {
                     total /= -1000.0;
                 }
             }
 
-            total = std::round(total);
             m_handler->setCellValue(destKey, destSheet, destRow, destColIndex, total);
             result.cellsTransferred++;
         }
 
-        // After writing all monthly columns for traffic_mott, compute and write Q column
-        // as static YTD sums (D through current month's column) so sap_ytd can read them.
-        // This replaces the Excel formula result without needing Excel to recalculate.
-        // TRAFFIC mott dest columns: Jan=D, Feb=E, Mar=F, Apr=G, May=H, Jun=I,
-        //                            Jul=J, Aug=K, Sep=L, Oct=M, Nov=N, Dec=O
-        if (isTrafficMott) {
-            static const QStringList tmMonthCols = {
-                "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"
-            };
-            static const QStringList tmMonthNames = {
-                "January", "February", "March", "April", "May", "June",
-                "July", "August", "September", "October", "November", "December"
-            };
-            int currentMonthIdx = -1;
-            for (int m = 0; m < tmMonthNames.size(); ++m) {
-                if (entry.month.compare(tmMonthNames[m], Qt::CaseInsensitive) == 0) {
-                    currentMonthIdx = m;
-                    break;
-                }
-            }
-            if (currentMonthIdx >= 0) {
-                const int colQ = m_handler->letterToColumn("Q");
-
-                // Helper lambda: compute D..currentMonth YTD sum for any row and write to Q
-                auto computeAndWriteQ = [&](int row) {
-                    double ytdSum = 0.0;
-                    for (int m = 0; m <= currentMonthIdx; ++m) {
-                        int colIdx = m_handler->letterToColumn(tmMonthCols[m]);
-                        QVariant raw = m_handler->getCellValue(destKey, destSheet, row, colIdx);
-                        if (raw.canConvert<double>())
-                            ytdSum += raw.toDouble();
-                    }
-                    ytdSum = std::round(ytdSum);
-                    m_handler->setCellValue(destKey, destSheet, row, colQ, ytdSum);
-                    qDebug() << "[TRAFFIC_MOTT Q]" << destSheet << "row" << row
-                             << "D.." << tmMonthCols[currentMonthIdx] << "= " << ytdSum;
-                };
-
-                // Step 1: compute Q for all detail rows written by the rowMap.
-                // rowMap is QMap<int, QVector<int>>: { destRow (TRAFFIC mott) → srcRows (PAX) }
-                // Keys ARE the dest rows in TRAFFIC mott 2025 — correct to use it.key().
-                QSet<int> writtenRows;
-                for (auto it = entry.rowMap.constBegin(); it != entry.rowMap.constEnd(); ++it) {
-                    int r = it.key();
-                    if (r > 0) writtenRows.insert(r);
-                }
-                for (int destRow : writtenRows)
-                    computeAndWriteQ(destRow);
-
-                // Step 2: compute Q for the total/summary rows that sap_ytd reads.
-                // These rows contain Excel SUM formulas in the real file (never recalculated
-                // via OpenXML), so we must compute them here as static values too.
-                // Row mapping (TRAFFIC mott 2025 → MZLZ Consolidated JG):
-                //   19 → Total passengers
-                //   35 → Departing total passengers
-                //   81 → Total movements
-                //   96 → Departing total movements
-                //   132 → Landed total tonnage
-                //   159 → Total tonnage
-                static const QVector<int> totalRows = {19, 35, 81, 96, 132, 159};
-                for (int totalRow : totalRows) {
-                    if (!writtenRows.contains(totalRow))  // avoid double-computing
-                        computeAndWriteQ(totalRow);
-                }
-
-                qDebug() << "[TRAFFIC_MOTT] wrote Q YTD sums for"
-                         << writtenRows.size() << "detail rows +"
-                         << totalRows.size() << "total rows, month=" << entry.month
-                         << "(D.." << tmMonthCols[currentMonthIdx] << ")";
-            }
-        }
+        // Q column in TRAFFIC mott 2025 sheet contains Excel SUM formulas — leave them alone.
+        // JG values in MZLZ Consolidated are now computed directly from the external
+        // TRAFFIC mott xlsx by summing G..currentMonthCol in handleSapYtd.
     } else if (!srcRows.isEmpty()) {
         if (srcRows.size() != destRows.size()) {
             qWarning() << "TransferService: row count mismatch for" << entry.sourceSheetTemplate
@@ -265,7 +265,7 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
         }
         {
             result.cellsTransferred = m_handler->transferData(srcKey,
-                                                              entry.sourceSheetTemplate,
+                                                              sourceSheet,
                                                               entry.sourceColumn,
                                                               srcRows,
                                                               destKey,
@@ -334,8 +334,8 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
                     double val = raw.toDouble(&ok);
                     if (!ok) {
                         val = 0.0;
-                        m_handler->setCellValue(destKey, entry.destSheet, row,
-                                                m_handler->letterToColumn(baseCol), 0.0);
+                        // DO NOT write 0 back to the cell — that overwrites formula cells
+                        // in months we didn't select, causing the Excel repair dialog.
                     }
                     if (row >= 115 && row <= 123) {
                         val = std::round(val);
@@ -362,7 +362,6 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
 
     // Optional: copy full sheet if user explicitly enabled it for this mapping
     if (entry.copyFullSheet) { 
-        const QString sourceSheet = entry.sourceSheetTemplate;
         if (sourceSheet.isEmpty()) {
             qWarning() << "TransferService: copyFullSheet requested but sourceSheetTemplate empty";
         } else {
@@ -393,7 +392,9 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
                                                       const QString& baseFolder) {
     Result result;
     QString srcKey = QString("%1_%2_sap_ytd").arg(entry.month).arg(year);
-    QString srcFile = m_handler->findSapYtdFile(baseFolder, entry.month, year);
+    QString srcFile = !entry.sourcePath.trimmed().isEmpty()
+                          ? entry.sourcePath
+                          : m_handler->findSapYtdFile(baseFolder, entry.month, year);
     if (srcFile.isEmpty()) {
         qWarning() << "SAP YTD file missing for" << entry.month << year;
         result.error = "SAP YTD file missing";
@@ -401,7 +402,14 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
     }
     // Guard: only load if not already pre-loaded by TransferWorker Phase 1
     if (!m_handler->isLoaded(srcKey)) {
-        m_handler->loadWorkbook(srcFile, srcKey);
+        QString loadError;
+        if (!m_handler->loadWorkbook(srcFile, srcKey, {}, &loadError)) {
+            if (loadError.isEmpty()) loadError = "unknown workbook load error";
+            result.error = QString("Failed to load SAP YTD workbook: %1 (%2)")
+                               .arg(srcFile, loadError);
+            qWarning() << result.error;
+            return result;
+        }
     }
 
     const QString sourceSheet = entry.sourceSheetTemplate.isEmpty() ? "Report" : entry.sourceSheetTemplate;
@@ -430,10 +438,11 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
         }
 
         if (!hasValue) continue;
-        // JG should be sign-flipped only (no /1000)
+        // JG: rows 212/216/218/222/226 (PAX/EUR section) divide by +1000 (no sign flip); all other rows by -1000
         if (destColumn == "JG") {
-            if (destRow == 216) {
-                total /= 1000.0; // keep positive for row 216
+            if (destRow == 212 || destRow == 216 || destRow == 218
+                || destRow == 222 || destRow == 226) {
+                total /= 1000.0;
             } else {
                 total /= -1000.0;
             }
@@ -455,70 +464,152 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
     // YTD total, avoiding formula dependency. This worked but required knowing the
     // exact PAX row numbers and column layout. Replaced by COM recalc below.
     // -------------------------------------------------------------------------
-    if (!entry.trafficSourceRows.isEmpty() && entry.trafficSourceRows.size() == entry.trafficDestRows.size()) {
+    if (!entry.trafficPaxRowMap.isEmpty()) {
 
-        // Step 1: Force Excel to recalculate the cost_control file via COM.
-        // This recalculates the Q column SUM formulas in TRAFFIC mott sheet and saves.
-        // DisplayAlerts=false + CorruptLoad=xlRepairFile suppresses all dialogs
-        // including the "we found a problem, do you want to repair?" popup.
-        qDebug() << "[YTD-TRAFFIC] Triggering COM recalc on:" << destFilePath;
-        QString comError;
-        bool recalcOk = ExcelHandler::recalcWithCOM(destFilePath, &comError);
-        if (!recalcOk) {
-            qWarning() << "[YTD-TRAFFIC] COM recalc failed:" << comError
-                       << "— falling back to reading potentially stale Q values";
-        } else {
-            // Reload the workbook from disk so we get the freshly recalculated values
-            m_handler->unloadWorkbook(destKey);
-            m_handler->loadWorkbook(destFilePath, destKey);
-            qDebug() << "[YTD-TRAFFIC] Workbook reloaded with fresh formula results";
-        }
+        const QString trafficDestCol = entry.trafficDestColumn.isEmpty() ? destColumn : entry.trafficDestColumn;
+        const int trafficDestColIndex = m_handler->letterToColumn(trafficDestCol);
 
-        // Step 2: Find the TRAFFIC mott sheet in the (now up-to-date) cost_control workbook
-        QString trafficMottSheet;
-        for (const QString& name : m_handler->getSheetNames(destKey)) {
-            if (name.trimmed().toLower().contains("traffic mott")) {
-                trafficMottSheet = name;
-                break;
-            }
-        }
-        if (trafficMottSheet.isEmpty()) {
-            qWarning() << "[YTD-TRAFFIC] TRAFFIC mott sheet not found in" << destKey;
-        } else {
-            const QString trafficDestCol = entry.trafficDestColumn.isEmpty() ? destColumn : entry.trafficDestColumn;
-            const int trafficDestColIndex = m_handler->letterToColumn(trafficDestCol);
-            const int colQ = m_handler->letterToColumn("Q");
+        {
+            // PAX source file key — pre-loaded as "Month_year_pax"
+            // This is the external TRAFFIC mott {year}.xlsx in the Traffic folder.
+            // Sheet1 contains single-month values per column (G=Jan, H=Feb, ... col=currentMonth).
+            // It does NOT contain YTD — YTD lives in cost_control's TRAFFIC mott sheet col Q.
+            //
+            // Strategy:
+            //   1. Read existing col Q from cost_control TRAFFIC mott sheet
+            //      (= correct YTD through previous month, already saved from prior transfers)
+            //   2. Read current month's value from external TRAFFIC mott xlsx Sheet1
+            //      (= single month value for the selected month)
+            //   3. new YTD = existingQ + currentMonthValue
+            //   4. Write new YTD → MZLZ JG
 
-            qDebug() << "[YTD-TRAFFIC] Reading Q column from" << trafficMottSheet
-                     << "rows=" << entry.trafficSourceRows;
+            QString paxKey = QString("%1_%2_pax").arg(entry.month).arg(year);
+            const QString paxColStr = entry.trafficSourceColumn; // e.g. "P" for October
+            if (!paxColStr.isEmpty() && m_handler->isLoaded(paxKey)) {
+                const int paxColIdx = m_handler->letterToColumn(paxColStr);
+                const QString paxSheet = "Sheet1";
+                const int colQ = m_handler->letterToColumn("Q");
 
-            // Step 3: Read Q column values (now correct after COM recalc) and write to MZLZ JG
-            for (int i = 0; i < entry.trafficSourceRows.size(); ++i) {
-                int srcRow  = entry.trafficSourceRows[i];   // row in TRAFFIC mott sheet
-                int mzlzRow = entry.trafficDestRows[i];     // row in MZLZ Consolidated
-
-                QVariant raw = m_handler->getCellValue(destKey, trafficMottSheet, srcRow, colQ);
-                if (!raw.canConvert<double>()) {
-                    qDebug() << "[YTD-TRAFFIC] Q" << srcRow << "not numeric, skipping";
-                    continue;
+                // Find TRAFFIC mott sheet in cost_control (for reading existing Q)
+                QString trafficMottSheet;
+                for (const QString& name : m_handler->getSheetNames(destKey)) {
+                    if (name.trimmed().toLower().contains("traffic mott")) {
+                        trafficMottSheet = name;
+                        break;
+                    }
                 }
-                double value = raw.toDouble();
+                {
+                    // Compute YTD by summing all months Jan..currentMonth from the
+                    // external TRAFFIC mott {year}.xlsx Sheet1.
+                    // Each column G=Jan, H=Feb, ... currentMonthCol=currentMonth
+                    // contains a single month's value for that row.
+                    // Sum them all in C++ → correct YTD, no COM recalc needed.
 
-                // Rows 5 (Total PAX) and 7 (Dep total PAX): Q column is already in
-                // thousands in the TRAFFIC mott sheet — divide by 1000 for MZLZ.
-                // Rows 8,9,10,11 (movements, tonnage): copy as-is.
-                if (mzlzRow == 5 || mzlzRow == 7) {
-                    value /= 1000.0;
+                    const int colG = m_handler->letterToColumn("G"); // January = col 7
+
+                    qDebug() << "[YTD-TRAFFIC] Summing Jan.." << paxColStr
+                             << "from" << paxKey << paxSheet
+                             << "paxRowMap=" << entry.trafficPaxRowMap;
+
+                    // Monthly dest column for MZLZ Consolidated (G=Jan, W=Feb, AM=Mar, ...)
+                    static const QMap<QString,QString> monthlyDestCols = {
+                        {"January","G"},   {"February","W"},  {"March","AM"},
+                        {"April","BD"},    {"May","BW"},      {"June","CP"},
+                        {"July","DJ"},     {"August","EF"},   {"September","FB"},
+                        {"October","FY"},  {"November","GX"}, {"December","HW"}
+                    };
+                    const QString monthlyColStr = monthlyDestCols.value(entry.month);
+                    const int monthlyColIndex = monthlyColStr.isEmpty()
+                                                ? -1
+                                                : m_handler->letterToColumn(monthlyColStr);
+
+                    for (auto it = entry.trafficPaxRowMap.constBegin();
+                         it != entry.trafficPaxRowMap.constEnd(); ++it) {
+                        int mzlzRow = it.key();   // MZLZ Consolidated dest row
+                        int paxRow  = it.value(); // PAX Sheet1 source row
+
+                        // Sum all months Jan..currentMonth from PAX Sheet1
+                        double ytdSum = 0.0;
+                        for (int col = colG; col <= paxColIdx; ++col) {
+                            QVariant v = m_handler->getCellValue(paxKey, paxSheet, paxRow, col);
+                            if (v.canConvert<double>()) ytdSum += v.toDouble();
+                        }
+
+                        // Apply ÷1000 for PAX rows (MZLZ rows 5 and 7)
+                        double value = ytdSum;
+                        if (mzlzRow == 5 || mzlzRow == 7)
+                            value /= 1000.0;
+                        value = std::round(value);
+
+                        qInfo() << "[STATUS] YTD-TRAFFIC paxRow" << paxRow
+                                << "sumG.." << paxColStr << "=" << ytdSum
+                                << (mzlzRow == 5 || mzlzRow == 7 ? "(÷1000)" : "")
+                                << "=>" << value
+                                << "-> MZLZ row" << mzlzRow
+                                << "col" << trafficDestCol;
+
+                        // Write YTD value → JG column
+                        m_handler->setCellValue(destKey, destSheet, mzlzRow, trafficDestColIndex, value);
+                        result.cellsTransferred++;
+
+                        // Also write the current month's single value → monthly column (G/W/AM/...)
+                        // This overwrites cross-sheet formulas like =+'TRAFFIC mott 2025'!$G$81
+                        // that would otherwise keep referencing the wrong year.
+                        if (monthlyColIndex > 0) {
+                            QVariant monthVal = m_handler->getCellValue(paxKey, paxSheet, paxRow, paxColIdx);
+                            double singleMonth = monthVal.canConvert<double>() ? monthVal.toDouble() : 0.0;
+                            if (mzlzRow == 5 || mzlzRow == 7)
+                                singleMonth /= 1000.0;
+                            singleMonth = std::round(singleMonth);
+                            m_handler->setCellValue(destKey, destSheet, mzlzRow, monthlyColIndex, singleMonth);
+                            result.cellsTransferred++;
+                        }
+                    }
                 }
-                value = std::round(value);
+                // Write FTE value from {year} FTE sheet row 33 → MZLZ row 16, col JG
+                // Source column matches month_mappings in staff.json: G=Jan,H=Feb,...R=Dec
+                // This runs alongside the YTD traffic write, using the same destKey/destSheet.
+                {
+                    static const QMap<QString,QString> fteSrcCol = {
+                        {"January","D"}, {"February","E"}, {"March","F"}, {"April","G"},
+                        {"May","H"}, {"June","I"}, {"July","J"}, {"August","K"},
+                        {"September","L"}, {"October","M"}, {"November","N"}, {"December","O"}
+                    };
+                    QString fteColStr = fteSrcCol.value(entry.month);
+                    if (!fteColStr.isEmpty()) {
+                        // Find the staff file loaded as "{month}_{year}_staff"
+                        QString staffKey = QString("%1_%2_staff").arg(entry.month).arg(year);
+                        // Resolve the FTE sheet name (may be "2025 FTE", "2026 FTE" etc.)
+                        QString fteSheet;
+                        QString fteSheetTemplate = QString("%1 FTE").arg(year);
+                        if (m_handler->isLoaded(staffKey)) {
+                            for (const QString& name : m_handler->getSheetNames(staffKey)) {
+                                if (name.trimmed().toLower() == fteSheetTemplate.toLower()) {
+                                    fteSheet = name;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!fteSheet.isEmpty()) {
+                            int fteCol = m_handler->letterToColumn(fteColStr);
+                            QVariant fteVal = m_handler->getCellValue(staffKey, fteSheet, 33, fteCol);
+                            if (fteVal.canConvert<double>()) {
+                                double fteValue = std::round(fteVal.toDouble());
+                                m_handler->setCellValue(destKey, destSheet, 16,
+                                                        trafficDestColIndex, fteValue);
+                                result.cellsTransferred++;
+                                qInfo() << "[STATUS] FTE row33 col" << fteColStr
+                                        << "=" << fteValue << "-> MZLZ row 16 col" << trafficDestCol;
+                            }
+                        } else {
+                            qWarning() << "[YTD-FTE] Sheet" << fteSheetTemplate
+                                       << "not found in" << staffKey << "— skipping FTE write";
+                        }
+                    }
+                }
 
-                qDebug() << "[YTD-TRAFFIC] TRAFFIC mott row" << srcRow
-                         << "Q=" << raw.toDouble()
-                         << (mzlzRow == 5 || mzlzRow == 7 ? "(÷1000)" : "")
-                         << "=" << value << "-> MZLZ row" << mzlzRow << "col" << trafficDestCol;
-
-                m_handler->setCellValue(destKey, destSheet, mzlzRow, trafficDestColIndex, value);
-                result.cellsTransferred++;
+                // PAX path done — skip legacy Q-column path
+                return result;
             }
         }
     }

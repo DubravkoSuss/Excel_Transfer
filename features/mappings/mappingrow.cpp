@@ -27,7 +27,7 @@ MappingRow::~MappingRow() = default;
 void MappingRow::buildUI()
 {
     setObjectName(QString("mappingRow_%1").arg(m_index));
-    setStyleSheet(QString("#mappingRow_%1 { background: white; border: 1px solid #E5E7EF; border-radius: 6px; }").arg(m_index));
+    setStyleSheet(QString("#mappingRow_%1 { background: white; border: none; border-radius: 8px; }").arg(m_index));
 
     QVBoxLayout* layout = new QVBoxLayout(this);
     layout->setContentsMargins(10, 8, 10, 8);
@@ -46,13 +46,8 @@ void MappingRow::buildUI()
     m_statusLabel->setVisible(false);
     topRow->addWidget(m_statusLabel);
 
-    QPushButton* runBtn = new QPushButton("Run");
-    QPushButton* removeBtn = new QPushButton("Remove");
-    connect(runBtn, &QPushButton::clicked, this, &MappingRow::onRunClicked);
-    connect(removeBtn, &QPushButton::clicked, this, &MappingRow::onRemoveClicked);
+    // Run and Remove buttons removed from UI — kept signals for compatibility.
     connect(m_checkbox, &QCheckBox::toggled, this, &MappingRow::changed);
-    topRow->addWidget(runBtn);
-    topRow->addWidget(removeBtn);
 
     layout->addLayout(topRow);
 
@@ -79,13 +74,23 @@ void MappingRow::buildUI()
     QPushButton* exportBtn = new QPushButton("Export RowMap");
     QPushButton* importBtn = new QPushButton("Import RowMap");
 
+    QPushButton* ignoreBtn = new QPushButton("⊘ Ignore");
+    ignoreBtn->setToolTip("Select rows to skip during transfer");
+    ignoreBtn->setStyleSheet(
+        "QPushButton { background: #FEF3C7; color: #92400E; font-weight: 600; "
+        "padding: 4px 8px; border-radius: 4px; border: 1px solid #FCD34D; }"
+        "QPushButton:hover { background: #FDE68A; }"
+    );
+
     connect(editRowsBtn, &QPushButton::clicked, this, &MappingRow::onEditRowsClicked);
     connect(exportBtn, &QPushButton::clicked, this, &MappingRow::onExportRowMapClicked);
     connect(importBtn, &QPushButton::clicked, this, &MappingRow::onImportRowMapClicked);
+    connect(ignoreBtn, &QPushButton::clicked, this, [this]() { emit ignoreRowsClicked(m_index); });
 
     rowActions->addWidget(editRowsBtn);
     rowActions->addWidget(exportBtn);
     rowActions->addWidget(importBtn);
+    rowActions->addWidget(ignoreBtn);
     rowActions->addStretch();
 
     layout->addLayout(rowActions);
@@ -104,6 +109,17 @@ void MappingRow::buildUI()
     QHBoxLayout* copyLayout = new QHBoxLayout();
     m_copyFullSheetCheck = new QCheckBox("Copy full sheet");
     m_copyFullSheetCheck->setChecked(m_entry.copyFullSheet);
+
+    // Hide "Copy full sheet" for mappings that read from the SAME destination file
+    // (budget_refi: REFI CM, Budget, prev year sheets are already IN the dest file —
+    //  copying the full sheet to itself makes no sense).
+    // Only show for external source files: sap, pax, traffic_mott, staff, sap_ytd, pax_transfer.
+    const bool isInternalSource = (m_entry.sourceFileType == "budget_refi");
+    if (isInternalSource) {
+        m_copyFullSheetCheck->setVisible(false);
+        m_copyFullSheetCheck->setChecked(false);
+        m_entry.copyFullSheet = false;
+    }
     m_customSheetName = new QLineEdit(m_entry.customSheetName);
     m_customSheetName->setPlaceholderText("Target sheet name (optional)");
     m_customSheetName->setEnabled(m_entry.copyFullSheet);

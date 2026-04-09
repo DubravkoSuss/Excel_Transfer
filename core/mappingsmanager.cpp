@@ -53,15 +53,30 @@ bool MappingsManager::loadPaxMappings(const QString& filePath) {
     if (error.error != QJsonParseError::NoError || !doc.isObject()) return false;
 
     QJsonObject root = doc.object();
-    QJsonObject src  = root["source"].toObject();
-    QJsonObject dest = root["dest"].toObject();
 
-    QString sourceSheet = src["sheet"].toString("Sheet1");
-    QString destSheet   = dest["sheet"].toString("MZLZ Consolidated");
-
+    // Support both old format (source/dest objects) and new format (rowMap + top-level fields)
+    QString sourceSheet, destSheet;
     QVector<int> sourceRows, destRows;
-    for (const QJsonValue& v : src["source_rows"].toArray())  sourceRows.append(v.toInt());
-    for (const QJsonValue& v : dest["dest_rows"].toArray())   destRows.append(v.toInt());
+
+    if (root.contains("source") && root["source"].isObject()) {
+        // Old format
+        QJsonObject src  = root["source"].toObject();
+        QJsonObject dest = root["dest"].toObject();
+        sourceSheet = src["sheet"].toString("Sheet1");
+        destSheet   = dest["sheet"].toString("MZLZ Consolidated");
+        for (const QJsonValue& v : src["source_rows"].toArray()) sourceRows.append(v.toInt());
+        for (const QJsonValue& v : dest["dest_rows"].toArray())  destRows.append(v.toInt());
+    } else {
+        // New format: rowMap { "destRow": srcRow }, top-level source_sheet/dest_sheet
+        sourceSheet = root["source_sheet"].toString("Sheet1");
+        destSheet   = root["dest_sheet"].toString("MZLZ Consolidated");
+        // rowMap: keys = dest rows, values = src rows
+        QJsonObject rowMapObj = root["rowMap"].toObject();
+        for (auto it = rowMapObj.begin(); it != rowMapObj.end(); ++it) {
+            destRows.append(it.key().toInt());
+            sourceRows.append(it.value().toInt());
+        }
+    }
 
     m_paxMappings.clear();
 
@@ -206,7 +221,7 @@ bool MappingsManager::loadBudgetRefiMappings(const QString& filePath) {
                     entry.sourceColumn        = srcCol;
                     entry.destColumn          = dstCol;
                     entry.destSheet           = destSheet;
-                    entry.sourceFileType      = "cost_control";
+                    entry.sourceFileType      = "budget_refi";
                     entry.copyFullSheet       = false;
                     entry.rowMap              = def.rowMap;
                     entries.append(entry);
@@ -233,7 +248,7 @@ bool MappingsManager::loadBudgetRefiMappings(const QString& filePath) {
                 entry.sourceColumn        = src["source_column"].toString("N");
                 entry.destSheet           = src["dest_sheet"].toString("MZLZ Consolidated");
                 entry.destColumn          = src["dest_column"].toString("G");
-                entry.sourceFileType      = "cost_control";
+                entry.sourceFileType      = "budget_refi";
                 entry.copyFullSheet       = false;
 
                 if (src.contains("rowMap")) {
@@ -273,7 +288,7 @@ bool MappingsManager::loadPaxTransferMappings(const QString& filePath) {
 
     QJsonObject root = doc.object();
     QString sourceSheet = root["source_sheet"].toString("Sheet1");
-    QString destSheet   = root["dest_sheet"].toString("TRAFFIC mott 2025");
+    QString destSheet   = root["dest_sheet"].toString("TRAFFIC mott {year}");
 
     // Parse rowMap
     QMap<int, QVector<int>> rowMap;
@@ -327,7 +342,7 @@ bool MappingsManager::loadTrafficMottMappings(const QString& filePath) {
 
     QJsonObject root = doc.object();
     QString sourceSheet = root["source_sheet"].toString("Sheet1");
-    QString destSheet   = root["dest_sheet"].toString("TRAFFIC mott 2025");
+    QString destSheet   = root["dest_sheet"].toString("TRAFFIC mott {year}");
 
     QMap<int, QVector<int>> rowMap;
     QJsonObject rowMapObj = root["rowMap"].toObject();
@@ -377,11 +392,17 @@ QVector<MappingEntry> MappingsManager::getPaxTransferMappingsForMonthYear(const 
 }
 
 QVector<MappingEntry> MappingsManager::getTrafficMottMappingsForMonthYear(const QString& month, int year) {
-    Q_UNUSED(year);
     QString monthLower = month.toLower().trimmed();
     if (m_trafficMottMappings.contains(monthLower)) {
         QVector<MappingEntry> entries = m_trafficMottMappings[monthLower];
-        for (MappingEntry& e : entries) e.month = month;
+        for (MappingEntry& e : entries) {
+            e.month = month;
+            // Resolve year placeholder in dest_sheet (e.g. "TRAFFIC mott 2025" → "TRAFFIC mott 2026")
+            if (!e.destSheet.isEmpty())
+                e.destSheet = resolveSheetName(e.destSheet, year, month);
+            if (!e.sourceSheetTemplate.isEmpty())
+                e.sourceSheetTemplate = resolveSheetName(e.sourceSheetTemplate, year, month);
+        }
         return entries;
     }
     return {};
@@ -520,7 +541,8 @@ QString MappingsManager::resolveSheetName(const QString& template_, int year, co
     // Detect: if template contains "FTE", "staff", "budget" (non-month sheets) → use year number
     QString lowerResult = result.toLower();
     bool useYearNumber = lowerResult.contains("fte") || lowerResult.contains("staff") ||
-                         lowerResult.contains("refi") || lowerResult.contains("ytd");
+                         lowerResult.contains("refi") || lowerResult.contains("ytd") ||
+                         lowerResult.contains("traffic") || lowerResult.contains("mott");
 
     if (useYearNumber || month.isEmpty()) {
         result.replace("{year}", QString::number(year), Qt::CaseInsensitive);
