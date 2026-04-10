@@ -115,10 +115,15 @@ void MappingRow::buildUI()
     //  copying the full sheet to itself makes no sense).
     // Only show for external source files: sap, pax, traffic_mott, staff, sap_ytd, pax_transfer.
     const bool isInternalSource = (m_entry.sourceFileType == "budget_refi");
-    if (isInternalSource) {
+    const bool isTrafficMott = (m_entry.sourceFileType == "traffic_mott");
+    if (isInternalSource || isTrafficMott) {
         m_copyFullSheetCheck->setVisible(false);
         m_copyFullSheetCheck->setChecked(false);
         m_entry.copyFullSheet = false;
+    }
+    if (isTrafficMott) {
+        if (m_customSheetName) m_customSheetName->setEnabled(false);
+        if (m_insertAfterSheet) m_insertAfterSheet->setEnabled(false);
     }
     m_customSheetName = new QLineEdit(m_entry.customSheetName);
     m_customSheetName->setPlaceholderText("Target sheet name (optional)");

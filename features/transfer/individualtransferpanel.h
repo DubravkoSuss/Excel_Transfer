@@ -82,7 +82,6 @@ private:
     
     QTableWidget* m_mappingTable;
     QLabel* m_mappingCounter;
-    QCheckBox* m_copySheetCheckbox;
     QPushButton* m_transferBtn;
 
     QVector<MappingEntry> m_mappingData;

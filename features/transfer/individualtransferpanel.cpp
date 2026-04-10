@@ -270,10 +270,7 @@ void IndividualTransferPanel::setupUI()
     
     mainLayout->addLayout(controlsLayout);
 
-    // Copy Sheet Checkbox
-    m_copySheetCheckbox = new QCheckBox("Copy entire sheet (ignores cell mappings)");
-    m_copySheetCheckbox->setStyleSheet("font-size: 13px; padding: 8px; color: #374151;");
-    mainLayout->addWidget(m_copySheetCheckbox);
+    mainLayout->addLayout(controlsLayout);
 
     // Action Buttons
     QHBoxLayout* actionLayout = new QHBoxLayout();
@@ -370,7 +367,7 @@ void IndividualTransferPanel::updateTransferButtonState()
 {
     bool hasFiles = !m_sourceFileEdit->text().isEmpty() && 
                     !m_destFileEdit->text().isEmpty();
-    bool hasMappings = !m_mappingData.isEmpty() || m_copySheetCheckbox->isChecked();
+    bool hasMappings = !m_mappingData.isEmpty();
     
     bool enabled = hasFiles && hasMappings;
     m_transferBtn->setEnabled(enabled);

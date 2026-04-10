@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.141592653-2.6-0.999998 (MiKTeX 26.2) (preloaded format=xelatex 2026.3.11)  3 APR 2026 11:22
+This is XeTeX, Version 3.141592653-2.6-0.999998 (MiKTeX 26.2) (preloaded format=xelatex 2026.3.11)  10 APR 2026 14:31
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1144,22 +1144,7 @@ Package zref Info: New property: mdf@pagevalue on input line 895.
 )
 Package hyperref Info: Option `colorlinks' set `true' on input line 86.
 Package hyperref Info: Option `bookmarksnumbered' set `true' on input line 86.
-
-
-! LaTeX Error: Command \newbox already defined.
-               Or name \end... illegal, see p.192 of the manual.
-
-See the LaTeX manual or LaTeX Companion for explanation.
-Type  H <return>  for immediate help.
- ...                                              
-                                                  
-l.215 }
-       
-Your command was ignored.
-Type  I <command> <return>  to replace it with another command,
-or  <return>  to continue without it.
-
-(user_manual_v3.aux)
+ (user_manual_v3.aux)
 \openout1 = `user_manual_v3.aux'.
 
 LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 216.
@@ -1430,10 +1415,18 @@ Overfull \hbox (32.52473pt too wide) in paragraph at lines 374--374
 File: ../../Pictures/Figure1.png Graphic file (type bmp)
 <../../Pictures/Figure1.png>
 
-LaTeX Warning: `h' float specifier changed to `ht'.
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
+[4]
+File: ../../Pictures/Figure14.png Graphic file (type bmp)
+<../../Pictures/Figure14.png>
 File: ../../Pictures/Figure4.png Graphic file (type bmp)
 <../../Pictures/Figure4.png>
+
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
@@ -1443,14 +1436,7 @@ File: ../../Pictures/Figure6.png Graphic file (type bmp)
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 
-Package fancyhdr Warning: \headheight is too small (14.0pt): 
-(fancyhdr)                Make it at least 23.11996pt, for example:
-(fancyhdr)                \setlength{\headheight}{23.11996pt}.
-(fancyhdr)                You might also make \topmargin smaller:
-(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
-
-[4]
-Overfull \hbox (56.30809pt too wide) in paragraph at lines 436--436
+Overfull \hbox (56.30809pt too wide) in paragraph at lines 443--443
 |[][][][][][][]\T1/lmr/bx/n/14.4 Loading
  []
 
@@ -1462,7 +1448,7 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
 [5]
-Overfull \hbox (62.8421pt too wide) in paragraph at lines 455--455
+Overfull \hbox (62.8421pt too wide) in paragraph at lines 462--462
 |[][][][][][][]\T1/lmr/bx/n/14.4 Mapping
  []
 
@@ -1474,6 +1460,17 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
 [6]
+File: ../../Pictures/Figure7.png Graphic file (type bmp)
+<../../Pictures/Figure7.png>
+
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+File: ../../Pictures/Figure12.png Graphic file (type bmp)
+<../../Pictures/Figure12.png>
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
 
 Package fancyhdr Warning: \headheight is too small (14.0pt): 
 (fancyhdr)                Make it at least 23.11996pt, for example:
@@ -1482,8 +1479,11 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
 [7]
-File: ../../Pictures/Figure7.png Graphic file (type bmp)
-<../../Pictures/Figure7.png>
+File: ../../Pictures/Figure9.png Graphic file (type bmp)
+<../../Pictures/Figure9.png>
+
+
+LaTeX Warning: `h' float specifier changed to `ht'.
 
 
 Package fancyhdr Warning: \headheight is too small (14.0pt): 
@@ -1493,33 +1493,12 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
 [8]
-File: ../../Pictures/Figure12.png Graphic file (type bmp)
-<../../Pictures/Figure12.png>
-
-
-Package fancyhdr Warning: \headheight is too small (14.0pt): 
-(fancyhdr)                Make it at least 23.11996pt, for example:
-(fancyhdr)                \setlength{\headheight}{23.11996pt}.
-(fancyhdr)                You might also make \topmargin smaller:
-(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
-
-[9]
-File: ../../Pictures/Figure9.png Graphic file (type bmp)
-<../../Pictures/Figure9.png>
-
-Overfull \hbox (56.4671pt too wide) in paragraph at lines 530--530
+Overfull \hbox (56.4671pt too wide) in paragraph at lines 537--537
 |[][][][][][][]\T1/lmr/bx/n/14.4 Execute
  []
 
 
-Package fancyhdr Warning: \headheight is too small (14.0pt): 
-(fancyhdr)                Make it at least 23.11996pt, for example:
-(fancyhdr)                \setlength{\headheight}{23.11996pt}.
-(fancyhdr)                You might also make \topmargin smaller:
-(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
-
-[10]
-Overfull \hbox (50.78392pt too wide) in paragraph at lines 554--554
+Overfull \hbox (50.78392pt too wide) in paragraph at lines 561--561
 |[][][][][][][]\T1/lmr/bx/n/14.4 Rolling
  []
 
@@ -1530,8 +1509,16 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[11]
-Overfull \hbox (23.68314pt too wide) in paragraph at lines 579--579
+[9]
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[10]
+Overfull \hbox (23.68314pt too wide) in paragraph at lines 586--586
 |[][][][][][][]\T1/lmr/bx/n/14.4 Fill
  []
 
@@ -1544,8 +1531,8 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[12]
-Overfull \hbox (53.87508pt too wide) in paragraph at lines 613--613
+[11]
+Overfull \hbox (53.87508pt too wide) in paragraph at lines 620--620
 |[][][][][][][]\T1/lmr/bx/n/14.4 Parallel
  []
 
@@ -1556,13 +1543,13 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[13]
-Overfull \hbox (47.27571pt too wide) in paragraph at lines 653--653
+[12]
+Overfull \hbox (47.27571pt too wide) in paragraph at lines 660--660
 |[][][][][][][]\T1/lmr/bx/n/14.4 Create
  []
 
 
-Overfull \hbox (71.95845pt too wide) in paragraph at lines 682--682
+Overfull \hbox (71.95845pt too wide) in paragraph at lines 689--689
 |[][][][][][][]\T1/lmr/bx/n/14.4 Individual
  []
 
@@ -1573,7 +1560,7 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[14]
+[13]
 File: ../../Pictures/Figure3.png Graphic file (type bmp)
 <../../Pictures/Figure3.png>
 File: ../../Pictures/Figure10.png Graphic file (type bmp)
@@ -1589,7 +1576,7 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[15]
+[14]
 File: ../../Pictures/Figure11.png Graphic file (type bmp)
 <../../Pictures/Figure11.png>
 
@@ -1597,40 +1584,48 @@ File: ../../Pictures/Figure11.png Graphic file (type bmp)
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 
-Overfull \hbox (34.46635pt too wide) in paragraph at lines 722--722
+Overfull \hbox (34.46635pt too wide) in paragraph at lines 729--729
 |[][][][][][][]\T1/lmr/bx/n/14.4 Data
  []
 
 
-Underfull \hbox (badness 3724) in paragraph at lines 739--739
+Underfull \hbox (badness 3724) in paragraph at lines 746--746
 \T1/lmr/m/n/10.95 FIC mott YYYY
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 739--739
+Underfull \hbox (badness 10000) in paragraph at lines 746--746
 []|\T1/lmr/m/n/10.95 Cost con-trol
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 739--739
+Underfull \hbox (badness 10000) in paragraph at lines 746--746
 \T1/lmr/m/n/10.95 TRAF-FIC mott
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 739--739
+Underfull \hbox (badness 10000) in paragraph at lines 746--746
 []|\T1/lmr/m/n/10.95 MZLZ Con-sol-i-
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 739--739
+Underfull \hbox (badness 10000) in paragraph at lines 746--746
 \T1/lmr/m/n/10.95 dated JG rows
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 739--739
+Underfull \hbox (badness 10000) in paragraph at lines 746--746
 []|\T1/lmr/m/n/10.95 MZLZ Con-sol-i-
  []
 
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[15]
 
 Package fancyhdr Warning: \headheight is too small (14.0pt): 
 (fancyhdr)                Make it at least 23.11996pt, for example:
@@ -1639,18 +1634,7 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
 [16]
-Overfull \vbox (13.3953pt too high) has occurred while \output is active []
-
-
-
-Package fancyhdr Warning: \headheight is too small (14.0pt): 
-(fancyhdr)                Make it at least 23.11996pt, for example:
-(fancyhdr)                \setlength{\headheight}{23.11996pt}.
-(fancyhdr)                You might also make \topmargin smaller:
-(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
-
-[17]
-Overfull \hbox (114.46541pt too wide) in paragraph at lines 769--769
+Overfull \hbox (114.46541pt too wide) in paragraph at lines 776--776
 |[][][][][][][]\T1/lmr/bx/n/14.4 Troubleshooting| 
  []
 
@@ -1661,23 +1645,18 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[18]
-Overfull \hbox (69.12468pt too wide) in paragraph at lines 801--801
+[17]
+Overfull \hbox (69.12468pt too wide) in paragraph at lines 808--808
 |[][][][][][][]\T1/lmr/bx/n/14.4 Appendix| 
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 824--824
-[]|\T1/lmtt/m/n/10.95 .../{YYYY}/{MM}/test/Cost Control ZAG
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 844--844
+Underfull \hbox (badness 10000) in paragraph at lines 851--851
 []|\T1/lmr/m/n/10.95 REFI/Budget/PrevYear
  []
 
 
-Underfull \hbox (badness 1694) in paragraph at lines 844--844
+Underfull \hbox (badness 1694) in paragraph at lines 851--851
 []|\T1/lmr/m/n/10.95 TRAFFIC mott Q $\OMS/lmsy/m/n/10.95 !$
  []
 
@@ -1688,7 +1667,18 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
+[18]
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
 [19]
+File: ../../Pictures/Figure15.png Graphic file (type bmp)
+<../../Pictures/Figure15.png>
+
 
 Package fancyhdr Warning: \headheight is too small (14.0pt): 
 (fancyhdr)                Make it at least 23.11996pt, for example:
@@ -1697,6 +1687,9 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
 [20]
+File: ../../Pictures/Figure16.png Graphic file (type bmp)
+<../../Pictures/Figure16.png>
+
 
 Package fancyhdr Warning: \headheight is too small (14.0pt): 
 (fancyhdr)                Make it at least 23.11996pt, for example:
@@ -1704,30 +1697,31 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[21] 
+[21]
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[22] 
 enddocument/afterlastpage (AED): lastpage setting LastPage.
 (user_manual_v3.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
-
-
-Package rerunfilecheck Warning: File `user_manual_v3.out' has changed.
-(rerunfilecheck)                Rerun to get outlines right
-(rerunfilecheck)                or use package `bookmark'.
-
-Package rerunfilecheck Info: Checksums for `user_manual_v3.out':
-(rerunfilecheck)             Before: 9F14AA5688F673DA8AF1B6F76DF22EF9;2179
-(rerunfilecheck)             After:  49C40EAF7154D308077C99A0C5BB17BD;2179.
+Package rerunfilecheck Info: File `user_manual_v3.out' has not changed.
+(rerunfilecheck)             Checksum: 49C40EAF7154D308077C99A0C5BB17BD;2179.
  ) 
 Here is how much of TeX's memory you used:
- 31632 strings out of 402983
- 632961 string characters out of 5447861
- 1145672 words of memory out of 5000000
- 59848 multiletter control sequences out of 15000+600000
- 707303 words of font info for 91 fonts, out of 8000000 for 9000
+ 31669 strings out of 402983
+ 633949 string characters out of 5447861
+ 1146935 words of memory out of 5000000
+ 59881 multiletter control sequences out of 15000+600000
+ 711566 words of font info for 92 fonts, out of 8000000 for 9000
  1348 hyphenation exceptions out of 8191
  86i,17n,98p,1205b,1322s stack positions out of 10000i,1000n,20000p,200000b,200000s
 
-Output written on user_manual_v3.pdf (23 pages).
+Output written on user_manual_v3.pdf (24 pages).

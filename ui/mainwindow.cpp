@@ -1815,7 +1815,7 @@ void MainWindow::onExecuteAll()
 
     if (transferMappings.isEmpty()) {
         abortExecutionSetup();
-        showToast("No selected mappings to execute.", ToastWidget::Warning);
+        showToast("No selected mappings to execute. Check if the file exists in the destination folder.", ToastWidget::Warning);
         return;
     }
 

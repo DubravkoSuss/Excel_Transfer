@@ -98,7 +98,7 @@
     \end{tikzpicture}%
 }
 \fancyhead[C]{\textcolor{MutedText}{\small User Manual}}
-\fancyhead[R]{\textcolor{MutedText}{\small v2.0 · \today}}
+\fancyhead[R]{\textcolor{MutedText}{\small v1.0 \today}}
 
 \renewcommand{\headrulewidth}{0.4pt}
 \renewcommand{\headrule}{\hbox to\headwidth{%
@@ -208,7 +208,7 @@
 % ── v3.0 additions ─────────────────────────────────────────────
 \definecolor{NewFeature}{HTML}{1A5276}
 \definecolor{LightNew}{HTML}{D6EAF8}
-\newtcolorbox{newbox}[1][New in v1.0]{
+\newtcolorbox{featurebox}[1][New in v1.0]{
   colback=LightNew, colframe=NewFeature, coltitle=White,
   fonttitle=\bfseries\small, title=\textbf{*}\ #1, arc=4pt,
   left=8pt, right=8pt, top=6pt, bottom=6pt
@@ -322,7 +322,7 @@ Excel Transfer Tool is a high-performance Qt/C++ desktop application that automa
 \textcolor{White}{\textbf{Feature}} & \textcolor{White}{\textbf{Description}} \\
 \midrule
 Parallel Transfer Backend & New \texttt{ParallelTransferController} with \texttt{IndividualTransferWorker} and \texttt{RollingTransferWorker}. Each worker owns its own \texttt{ExcelHandler} and \texttt{TransferService} --- fully thread-safe. \\
-Fill All Months & Writes Jan through target month into a single cost-control file. Destination always points to the \texttt{test/} subfolder. \\
+Fill All Months & Writes Jan through target month into a single cost-control file. Destination always points to the \texttt{Month/} subfolder. \\
 Ignore Rows Dialog & Per-mapping-card dialog showing all rowMap entries. Check rows to skip during transfer. Filter by row number or value. \\
 Create Month File & Button on each YearCard. Activates creation mode: select months, click Load Periods, app finds last existing file and copies it for missing months. \\
 Visual Cell Selector & ``Select Source/Dest Cells'' opens a scrollable grid of the loaded Excel sheet. Click any cell to capture its reference. \\
@@ -399,6 +399,13 @@ Log            & Toggles the status log panel (hidden by default) \\
 \end{tabularx}
 \end{center}
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.92\linewidth]{../../Pictures/Figure14.png}
+\caption{The \textbf{application header bar} with the global toolbar buttons highlighted. From left to right: \textbf{Execute All} (green) --- runs all checked mapping cards in sequence; \textbf{Pause} (white) --- suspends the current transfer after the active cell write completes; \textbf{Stop} (red) --- cancels execution immediately; \textbf{Execute RT} (amber) --- starts a Rolling Transfer chain using the \textit{Load RT} period; \textbf{Reset} (dark) --- clears all loaded files, mapping cards, and period selections; \textbf{Log} (dark) --- toggles the status log panel. The four tabs below give access to \textit{Monthly Transfer}, \textit{Fill All Months}, \textit{Hybrid Transfer}, and \textit{Individual Transfer}.}
+\label{fig:toolbar}
+\end{figure}
+
 \subsection{Year Cards}
 
 Each year card shows month checkboxes and quick-select controls:
@@ -424,7 +431,7 @@ Maximum \textbf{5 months} can be selected at a time for Execute All. Selecting m
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.82\linewidth]{../../Pictures/Figure6.png}
-\caption{Individual Transfer tab showing the \textbf{Log} button in the header bar (top right). The status bar at the bottom displays live transfer progress.}
+\caption{\textbf{Individual Transfer} tab in its initial state. Browse for a \textit{Source File} and \textit{Destination File} using the \textbf{Browse} buttons. Once files are loaded, the \textbf{Select Source Cells (Graphical)} and \textbf{Select Destination Cells (Graphical)} buttons become active for visual cell mapping. The \textit{Transfer Mapping} table at the bottom shows all defined source-to-destination cell pairs ready for execution.}
 \label{fig:logbutton}
 \end{figure}
 
@@ -485,7 +492,7 @@ Import       & Import rowMap from JSON file \\
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.82\linewidth]{../../Pictures/Figure7.png}
-\caption{Active Mappings section showing a loaded mapping card (SAP Report $\rightarrow$ MZLZ Consolidated). The card shows Src/Dest Sheet, Src/Dest Column, and action buttons: \textbf{Edit Rows}, \textbf{Export RowMap}, \textbf{Import RowMap}, and \textbf{Ignore}. The \textbf{+ Create Files} button is visible on the year card header.}
+\caption{\textbf{Active Mappings} sidebar on the Monthly Transfer tab, showing loaded mapping cards for May 2025. Each card displays the source sheet, source column, destination sheet, and destination column. Cards with an amber \textbf{Ignore} badge are excluded from the next transfer run. The \textbf{Copy full sheet}, \textbf{Target sheet name}, and \textbf{Insert after sheet name} fields appear below cards that support full-sheet copying. The year/month selector on the right shows May 2025 highlighted.}
 \label{fig:mappingcard}
 \end{figure}
 
@@ -496,7 +503,7 @@ The ``Copy full sheet'' checkbox is \textbf{automatically hidden} for REFI, Budg
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.88\linewidth]{../../Pictures/Figure12.png}
-\caption{\textbf{Copy Full Sheet} option on a SAP mapping card. When enabled, the entire source sheet is copied to the destination workbook. Two optional fields allow specifying a \textbf{Target sheet name} (rename on copy) and \textbf{Insert after sheet name} (position in workbook). This option is hidden for REFI/Budget/prev-year mappings since those sheets already exist in the destination file.}
+\caption{\textbf{Active Mappings} sidebar showing a mapping card for April 2025 with the \textbf{Ignore} badge highlighted (amber). The card maps the \textit{2025 FTE} source sheet (column G) to \textit{MZLZ Consolidated} (column BD). Clicking the \textbf{Ignore} badge on any card toggles it in or out of the next transfer run without removing the mapping. The \textbf{Copy full sheet} checkbox and sheet name fields below the card allow full-sheet copy mode for supported mapping types.}
 \label{fig:copyfullsheet}
 \end{figure}
 
@@ -565,7 +572,7 @@ Rolling Transfer processes months \textbf{sequentially}, where each month's outp
 \item Click \textbf{Load RT} to validate source files exist.
 \item Click \textbf{Execute RT}:
     \begin{itemize}[leftmargin=*, itemsep=2pt]
-    \item Copies previous month file to new month's \texttt{test/} folder
+    \item Copies previous month file to new month's \texttt{Month/} folder
     \item Applies all mappings (traffic\_mott, pax\_transfer, pax, staff, SAP, REFI, sap\_ytd)
     \item Saves and reloads before proceeding to next month
     \end{itemize}
@@ -586,7 +593,7 @@ Fill All Months writes data for \textbf{all months January through a target mont
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.82\linewidth]{../../Pictures/Figure2.png}
-\caption{Fill All Months tab --- select year and target month, then click Scan Files to discover all source files.}
+\caption{\textbf{Fill All Months} tab in its initial state. The left sidebar shows the \textit{Active Mappings} panel with \textbf{All} and \textbf{None} toggle buttons for selecting which mapping types to include. On the right, set the \textit{Year} and \textit{Target Month}, then click \textbf{Scan Files} to discover all source files from January through the target month. The \textit{Execute Fill All Months} button becomes active after a successful scan.}
 \label{fig:fillall}
 \end{figure}
 
@@ -601,8 +608,8 @@ Fill All Months writes data for \textbf{all months January through a target mont
 \end{enumerate}
 
 \begin{infobox}[Destination Path]
-The destination file is always in the \texttt{test/} subfolder:\\
-\texttt{L:/Cost control/.../2025/11/test/Cost Control ZAG 11\_2025\_working.xlsm}
+The destination file is always in the \texttt{Month/} subfolder:\\
+\texttt{L:/Cost control/.../2025/11/Cost Control ZAG 11\_2025\_working.xlsm}
 \end{infobox}
 
 \begin{warningbox}[Corrupt Files]
@@ -671,7 +678,7 @@ The Create Month File feature copies an existing cost-control xlsm as a template
 \end{stepbox}
 
 \begin{infobox}[Source File Selection]
-The app always copies from the \textbf{most recent existing} month. If only February exists, it uses February for March, April, May, etc. Files are created in the \texttt{test/} subfolder of each month's directory.
+The app always copies from the \textbf{most recent existing} month. If only February exists, it uses February for March, April, May, etc. Files are created in the \texttt{Month/} subfolder of each month's directory.
 \end{infobox}
 
 \begin{successbox}[Result]
@@ -696,7 +703,7 @@ When configuring an \textbf{Individual Transfer}, click \textbf{Select Source Ce
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.82\linewidth]{../../Pictures/Figure3.png}
-\caption{Individual Transfer tab --- browse source and destination files, use graphical cell selection buttons, and configure the transfer mapping table.}
+\caption{\textbf{Fill All Months} tab while a transfer is in progress for year 2025, target month March. The left sidebar lists \textit{Active Mapping} cards for each discovered month (January, February shown). The scan results table on the right lists all found source files per month and mapping type (sap, budget\_refi, traffic\_mott, staff, pax\_transfer, sap\_ytd), each confirmed with a green checkmark. A progress dialog shows the current file loading stage at 0\%.}
 \label{fig:individual}
 \end{figure}
 
@@ -778,7 +785,7 @@ Mappings execute in this fixed priority order:
 
 \subsection{0 Cells Transferred}
 \begin{itemize}[leftmargin=*, itemsep=4pt]
-\item Verify destination file is in the \texttt{test/} subfolder
+\item Verify destination file is in the \texttt{Month/} subfolder
 \item Check source files (SAP, PAX, Staff) are present and correctly named
 \item Ensure no rows are accidentally marked as ``Ignore'' in the Ignore Rows dialog
 \item Review log panel for ``sheet not found'' or ``file missing'' warnings
@@ -792,7 +799,7 @@ Application crashes with exit code 0xC0000602 when clicking Execute All.
 \textbf{Fix:} Select \textbf{maximum 5 months} at a time. The app will show a warning if more are selected.
 
 \subsection{Fill All Months Writes to Wrong Folder}
-Ensure the destination path shown in the scan table ends with \texttt{/test/}. If it points to the root month folder, the file naming in that folder may be non-standard.
+Ensure the destination path shown in the scan table ends with \texttt{/Month/}. If it points to the root month folder, the file naming in that folder may be non-standard.
 
 \subsection{Parallel Transfer Not Visible in UI}
 The Parallel Transfer backend is implemented but the UI tab is under development. The backend can be connected by wiring \texttt{ParallelTransferController} signals in \texttt{mainwindow.cpp}.
@@ -805,7 +812,7 @@ The Parallel Transfer backend is implemented but the UI tab is under development
 
 \begin{codebox}
 Cost Control ZAG \{MM\}\_\{YYYY\}\_working.xlsm\\
-Location: L:/Cost control/Cost Control/Cost control/\{YYYY\}/\{MM\}/test/
+Location: L:/Cost control/Cost Control/Cost control/\{YYYY\}/\{MM\}/month/
 \end{codebox}
 
 \begin{center}
@@ -815,7 +822,7 @@ Location: L:/Cost control/Cost Control/Cost control/\{YYYY\}/\{MM\}/test/
 \rowcolor{PrimaryBlue}
 \textcolor{White}{\textbf{File Type}} & \textcolor{White}{\textbf{Path Pattern}} \\
 \midrule
-Cost Control  & \texttt{.../\{YYYY\}/\{MM\}/test/Cost Control ZAG \{MM\}\_\{YYYY\}\_working.xlsm} \\
+Cost Control  & \texttt{.../\{YYYY\}/\{MM\}/Cost Control ZAG \{MM\}\_\{YYYY\}\_working.xlsm} \\
 SAP Monthly   & \texttt{.../\{YYYY\}/\{MM\}/SAP export monthly/\{MM\}\_\{YYYY\}.xlsx} \\
 SAP YTD       & \texttt{.../\{YYYY\}/\{MM\}/SAP export monthly/YTD\_\{MM\}\_\{YYYY\}.xlsm} \\
 Traffic (PAX) & \texttt{.../\{YYYY\}/\{MM\}/Traffic/TRAFFIC mott \{YYYY\}.xlsx} \\
@@ -881,6 +888,35 @@ Maximum safe months (Execute All) & 5 months \\
 \bottomrule
 \end{tabularx}
 \end{center}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Hybrid Transfer Tab}
+% ─────────────────────────────────────────────────────────────────────────────
+
+The \textbf{Hybrid Transfer} tab lets you assign individual months to either \textit{Execute All} (cell-by-cell mapping) or \textit{Execute RT} (rolling transfer), then run both modes automatically in sequence. This is useful when some months need a standard transfer while others require a rolling transfer chain.
+
+\textbf{How to use Hybrid Transfer:}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+  \item Select the \textbf{Year} and set the \textbf{Transfer Type} (\textit{Execute All} or \textit{Execute RT}) from the dropdown.
+  \item Check the months you want to assign using the month checkboxes or the \textit{Q1--Q4 / All / None} quick-select buttons.
+  \item Click \textbf{+ Add Selected Months} to add them to the \textit{Assigned Periods} table below.
+  \item Repeat steps 1--3 to add more months with a different transfer type.
+  \item Click \textbf{Execute All} in the header toolbar to run all assigned periods in sequence.
+\end{enumerate}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{../../Pictures/Figure15.png}
+\caption{The \textbf{Hybrid Transfer} tab in its initial state. The left panel shows \textit{Row Mappings} (mapping cards appear here once months are loaded). On the right, the \textit{Assign Periods} section allows selecting a \textbf{Year} (2026 shown) and \textbf{Transfer Type} (\textit{Execute All} or \textit{Execute RT}). Individual months are checked via the month grid or the \textit{Q1}--\textit{Q4} / \textit{All} / \textit{None} quick-select buttons. Click \textbf{+ Add Selected Months} to register the selection in the \textit{Assigned Periods} table. The status bar reads ``Ready -- Select years and months, then click Load''.}
+\label{fig:hybrid-empty}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{../../Pictures/Figure16.png}
+\caption{The \textbf{Hybrid Transfer} tab with periods assigned and mapping cards loaded for February 2026. The left \textit{Row Mappings} sidebar shows all mapping cards for the loaded month (SAP Report, REFI CM, Budget 2025 --- each with source/destination sheet and column, and an amber \textbf{Ignore} badge where applicable). The \textit{Transfer Type} dropdown on the right shows both options --- \textit{Execute All} and \textit{Execute RT} --- open for selection. The \textit{Assigned Periods} table at the bottom lists three entries: February 2026 (\textit{Execute All}, Pending), September 2026 (\textit{Execute RT}, Pending), and October 2026 (\textit{Execute RT}, Pending). Click \textbf{Execute All} in the header toolbar to process all assigned periods.}
+\label{fig:hybrid-loaded}
+\end{figure}
 
 \vspace{1cm}
 \begin{center}

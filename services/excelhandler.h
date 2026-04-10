@@ -82,6 +82,8 @@ public:
     // cached formula results on disk are correct when OpenXML reads them.
     // Returns true on success. Requires Excel installed on the machine.
     static bool recalcWithCOM(const QString& filePath, QString* errorOut = nullptr);
+    static bool applyNumberFormatGeneral(const QString& filePath, const QStringList& sheetNames,
+                                         QString* errorOut = nullptr);
     static bool repairAndSaveWithCOM(const QString& filePath, QString* errorOut = nullptr);
     static bool silentRepairWithPowerShell(const QString& filePath, QString* errorOut = nullptr);
     static bool validateWorkbookFile(const QString& filePath, QString* errorOut = nullptr);

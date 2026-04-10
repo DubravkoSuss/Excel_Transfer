@@ -35,9 +35,6 @@ static QString buildCellRef(const QString& col, int row)
 static constexpr int kMaxExcelRows = 1048576;
 static constexpr int kMaxExcelCols = 16384;
 
-// Forward declarations of static helpers
-static void applyRowColorsHelper(QByteArray& sheetStr, QByteArray& stylesXml, const QSet<int>& mappingRows);
-
 static bool isValidCellAddress(int row, int col)
 {
     return row > 0 && row <= kMaxExcelRows && col > 0 && col <= kMaxExcelCols;
@@ -518,6 +515,53 @@ static QByteArray convertSharedToInline(const QByteArray& sheetXml, const QVecto
     return out;
 }
 
+static void widenSheetColumns(QByteArray& sheetXml, double minWidth)
+{
+    if (sheetXml.isEmpty())
+        return;
+
+    int sheetDataPos = sheetXml.indexOf("<sheetData");
+    if (sheetDataPos < 0)
+        return;
+
+    int colsStart = sheetXml.indexOf("<cols>");
+    if (colsStart < 0) {
+        QByteArray colsBlock = QString("<cols>\n  <col min=\"1\" max=\"16384\" width=\"%1\" customWidth=\"1\"/>\n</cols>\n")
+                                 .arg(minWidth, 0, 'f', 2)
+                                 .toUtf8();
+        sheetXml.insert(sheetDataPos, colsBlock);
+        return;
+    }
+
+    QString xml = QString::fromUtf8(sheetXml);
+    QRegularExpression colRx(
+        QStringLiteral("<col\\s+([^>]*?)min=\"(\\d+)\"([^>]*?)max=\"(\\d+)\"([^>]*?)width=\"([\\d.]+)\"([^>]*?)/>"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    struct Hit { qsizetype start; qsizetype len; QString replacement; };
+    QVector<Hit> hits;
+
+    auto it = colRx.globalMatch(xml);
+    while (it.hasNext()) {
+        auto m = it.next();
+        double currentWidth = m.captured(6).toDouble();
+        if (currentWidth < minWidth) {
+            QString patched = m.captured(0);
+            patched.replace(QStringLiteral("width=\"") + m.captured(6) + QStringLiteral("\""),
+                            QString("width=\"%1\"").arg(minWidth, 0, 'f', 2));
+            if (!patched.contains("customWidth"))
+                patched.replace("/>", QStringLiteral(" customWidth=\"1\"/>"));
+            hits.append({ m.capturedStart(0), m.capturedLength(0), patched });
+        }
+    }
+
+    for (int i = hits.size() - 1; i >= 0; --i)
+        xml.replace(hits[i].start, hits[i].len, hits[i].replacement);
+
+    if (!hits.isEmpty())
+        sheetXml = xml.toUtf8();
+}
+
 static QByteArray stripCellWatches(const QByteArray& sheetXml)
 {
     QString input = QString::fromUtf8(sheetXml);
@@ -966,7 +1010,6 @@ static QByteArray mergeSheetXml(const QByteArray& originalXml, const SheetData& 
                     QByteArray replacement = ">" + rowContent + "</row>";
                     output.replace(rowTagEnd - 1, 2, replacement);
                     sdEnd += replacement.size() - 2;
-                    sdEnd += replacement.size() - 2;
                 } else {
                     int rowClose = output.indexOf("</row>", rowTagEnd);
                     if (rowClose != -1) {
@@ -981,7 +1024,6 @@ static QByteArray mergeSheetXml(const QByteArray& originalXml, const SheetData& 
             } else {
                 QByteArray newRow = QString("<row r=\"%1\">").arg(rowNum).toUtf8() + rowCells + "</row>";
                 output.insert(insertPos, newRow);
-                sdEnd += newRow.size();
                 sdEnd += newRow.size();
             }
         }
@@ -1353,24 +1395,18 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
     // relsXml and contentTypesXml are only written to replacements when new sheets are added.
     // No deduplication needed  ” they are already clean from the source file.
 
-    // Clean currency symbols from styles globally
     QByteArray stylesXml = getEntry("xl/styles.xml");
-    if (!stylesXml.isEmpty()) {
-        stylesXml.replace("\\ &quot;€&quot;", "");
-        stylesXml.replace("\\ &quot;£&quot;", "");
-        stylesXml.replace("\\ &quot;kn&quot;", "");
-        stylesXml.replace("\\ &quot;$&quot;", "");
-        stylesXml.replace("&quot;€&quot;", "");
-        stylesXml.replace("&quot;£&quot;", "");
-        stylesXml.replace("&quot;kn&quot;", "");
-        stylesXml.replace("&quot;$&quot;", "");
-        stylesXml.replace("€", "");
-        stylesXml.replace("£", "");
-        stylesXml.replace("$", "");
-        replacements["xl/styles.xml"] = stylesXml;
+
+    // If any sheet has highlight rows, inject styles once
+    int blueXfIdx = -1, lightBlueXfIdx = -1;
+    bool needsHighlight = !wb.highlightSourceRows.isEmpty();
+    if (needsHighlight && !stylesXml.isEmpty()) {
+        auto [bi, lbi] = injectHighlightStyles(stylesXml);
+        blueXfIdx = bi;
+        lightBlueXfIdx = lbi;
+        if (blueXfIdx >= 0)
+            replacements["xl/styles.xml"] = stylesXml;
     }
-
-
 
     // Write all modified sheets + raw overrides
     QSet<QString> sheetsToWrite = QSet<QString>(wb.modifiedSheets.begin(), wb.modifiedSheets.end());
@@ -1432,20 +1468,16 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
 
             // IMPORTANT: wb is const; QMap::operator[] on a const map returns a temporary copy.
             // Never take begin()/end() from that temporary  ” it will crash/UB.
-            auto rowsIt = wb.highlightSourceRows.constFind(sheetName);
-            if (rowsIt != wb.highlightSourceRows.constEnd()) {
-                const QVector<int>& rows = rowsIt.value();
-                const QSet<int> srcSet(rows.cbegin(), rows.cend());
-                
-                // Fetch the latest aggregated styles.xml
-                QByteArray currStyles = replacements.contains("xl/styles.xml") ? replacements["xl/styles.xml"] : stylesXml;
-                
-                applyRowColorsHelper(xml, currStyles, srcSet);
-                
-                // Write the updated styles back into the replacement payload
-                replacements["xl/styles.xml"] = currStyles;
+            if (blueXfIdx >= 0 && lightBlueXfIdx >= 0) {
+                auto rowsIt = wb.highlightSourceRows.constFind(sheetName);
+                if (rowsIt != wb.highlightSourceRows.constEnd()) {
+                    const QVector<int>& rows = rowsIt.value();
+                    const QSet<int> srcSet(rows.cbegin(), rows.cend());
+                    xml = applyRowHighlights(xml, srcSet, blueXfIdx, lightBlueXfIdx);
+                }
             }
 
+            widenSheetColumns(xml, 20.0);
             replacements.insert(zipPath, xml);
             continue;
         }
@@ -1822,6 +1854,14 @@ bool ExcelHandler::saveWorkbook(const QString& key, const QString& outputPath)
 
     bool ok = saveOpenXML(dest, wb);
 
+    if (ok && !wb.rawSheetOverrides.isEmpty()) {
+        QString comError;
+        const QStringList sheetsToFormat = wb.rawSheetOverrides.keys();
+        if (!ExcelHandler::applyNumberFormatGeneral(dest, sheetsToFormat, &comError)) {
+            qWarning() << "[COM-FORMAT] Failed for" << dest << ":" << comError;
+        }
+    }
+
     // After a successful save, update the cached workbook path to the new file
     // so future saves read the latest state (prevents overwriting new sheets)
     if (ok) {
@@ -1955,6 +1995,121 @@ bool ExcelHandler::recalcWithCOM(const QString& filePath, QString* errorOut)
     excel.dynamicCall("Quit()");
 
     qDebug() << "[COM-RECALC] Done for:" << filePath;
+    return true;
+}
+
+bool ExcelHandler::applyNumberFormatGeneral(const QString& filePath, const QStringList& sheetNames,
+                                             QString* errorOut)
+{
+    if (sheetNames.isEmpty())
+        return true;
+
+    qDebug() << "[COM-FORMAT] Starting for:" << filePath << "sheets=" << sheetNames;
+
+    QAxObject excel("Excel.Application");
+    if (excel.isNull()) {
+        QString err = "COM: Excel.Application not available  – is Excel installed?";
+        qWarning() << "[COM-FORMAT]" << err;
+        if (errorOut) *errorOut = err;
+        return false;
+    }
+
+    excel.setProperty("Visible", false);
+    excel.setProperty("DisplayAlerts", false);
+    excel.setProperty("AutomationSecurity", 3);
+
+    QAxObject* workbooks = excel.querySubObject("Workbooks");
+    if (!workbooks) {
+        QString err = "COM: Could not access Workbooks collection";
+        qWarning() << "[COM-FORMAT]" << err;
+        if (errorOut) *errorOut = err;
+        excel.dynamicCall("Quit()");
+        return false;
+    }
+
+    QAxObject* wb = nullptr;
+    {
+        QList<QVariant> args;
+        args << QVariant(filePath)
+             << QVariant(0)
+             << QVariant(false)
+             << QVariant(5)
+             << QVariant("")
+             << QVariant("")
+             << QVariant(false)
+             << QVariant(2)
+             << QVariant("")
+             << QVariant(false)
+             << QVariant(false)
+             << QVariant(0)
+             << QVariant(false)
+             << QVariant(false)
+             << QVariant(2);
+        workbooks->dynamicCall("Open(QVariant&,QVariant&,QVariant&,QVariant&,QVariant&,"
+                               "QVariant&,QVariant&,QVariant&,QVariant&,QVariant&,"
+                               "QVariant&,QVariant&,QVariant&,QVariant&,QVariant&)", args);
+        wb = excel.querySubObject("ActiveWorkbook");
+    }
+
+    if (!wb || wb->isNull()) {
+        qWarning() << "[COM-FORMAT] Open failed, trying simple Open...";
+        if (wb) delete wb;
+        wb = workbooks->querySubObject("Open(const QString&)", filePath);
+    }
+
+    if (!wb || wb->isNull()) {
+        QString err = QString("COM: Failed to open workbook: %1").arg(filePath);
+        qWarning() << "[COM-FORMAT]" << err;
+        if (errorOut) *errorOut = err;
+        excel.dynamicCall("Quit()");
+        return false;
+    }
+
+    QAxObject* sheets = wb->querySubObject("Worksheets");
+    if (!sheets) {
+        QString err = "COM: Could not access Worksheets collection";
+        qWarning() << "[COM-FORMAT]" << err;
+        if (errorOut) *errorOut = err;
+        wb->dynamicCall("Close(bool)", false);
+        excel.dynamicCall("Quit()");
+        return false;
+    }
+
+    for (const QString& sheetName : sheetNames) {
+        QAxObject* sheet = sheets->querySubObject("Item(const QVariant&)", sheetName);
+        if (!sheet || sheet->isNull()) {
+            qWarning() << "[COM-FORMAT] Sheet not found:" << sheetName;
+            if (sheet) delete sheet;
+            continue;
+        }
+
+        QAxObject* cells = sheet->querySubObject("Cells");
+        if (cells && !cells->isNull()) {
+            // Step 1: Select the sheet (Ctrl+A)
+            sheet->dynamicCall("Select()");
+            QThread::msleep(300);
+            cells->dynamicCall("Select()");
+            QThread::msleep(500);
+
+            QAxObject* selection = excel.querySubObject("Selection");
+            if (selection && !selection->isNull()) {
+                selection->setProperty("NumberFormat", "General");
+                selection->setProperty("NumberFormatLocal", "General");
+                delete selection;
+            } else {
+                cells->setProperty("NumberFormat", "General");
+                cells->setProperty("NumberFormatLocal", "General");
+            }
+        }
+        if (cells) delete cells;
+        delete sheet;
+    }
+
+    wb->dynamicCall("Save()");
+    wb->dynamicCall("Close(bool)", false);
+    excel.dynamicCall("Quit()");
+
+    qDebug() << "[COM-FORMAT] Done for:" << filePath;
     return true;
 }
 
@@ -2400,7 +2555,153 @@ bool ExcelHandler::renameSheet(const QString& key, const QString& oldName, const
 }
 
 // Apply dark blue (sourceRows) / light blue (all other rows) fill to row elements in sheet XML.
+// styleBlue and styleLightBlue are xf indices in the destination styles.xml.
+static QByteArray applyRowHighlights(const QByteArray& sheetXml,
+                                     const QSet<int>& sourceRows,
+                                     int styleBlue, int styleLightBlue)
+{
+    QByteArray out;
+    out.reserve(sheetXml.size() + sheetXml.size() / 4);
 
+    int pos = 0;
+    const int len = sheetXml.size();
+
+    while (pos < len) {
+        int rowStart = sheetXml.indexOf("<row ", pos);
+        if (rowStart == -1) {
+            out.append(sheetXml.constData() + pos, len - pos);
+            break;
+        }
+        out.append(sheetXml.constData() + pos, rowStart - pos);
+
+        // Find end of opening <row ...> tag
+        int tagEnd = sheetXml.indexOf('>', rowStart);
+        if (tagEnd == -1) {
+            out.append(sheetXml.constData() + rowStart, len - rowStart);
+            break;
+        }
+
+        QByteArray rowTag = sheetXml.mid(rowStart, tagEnd - rowStart + 1);
+
+        // Extract r="N" row number
+        int rIdx = rowTag.indexOf("r=\"");
+        int rowNum = -1;
+        if (rIdx != -1) {
+            int rEnd = rowTag.indexOf('"', rIdx + 3);
+            if (rEnd != -1)
+                rowNum = rowTag.mid(rIdx + 3, rEnd - rIdx - 3).toInt();
+        }
+
+        if (rowNum > 0) {
+            int styleIdx = sourceRows.contains(rowNum) ? styleBlue : styleLightBlue;
+
+            // Strip existing s="..." and customFormat="..." attrs
+            QByteArray clean = rowTag;
+            // Remove customFormat="..."
+            {
+                int cf = clean.indexOf("customFormat=\"");
+                if (cf != -1) {
+                    int cfEnd = clean.indexOf('"', cf + 14);
+                    if (cfEnd != -1) clean.remove(cf, cfEnd - cf + 1);
+                }
+            }
+            // Remove s="..." (only standalone, not inside another attr)
+            {
+                int si = clean.indexOf(" s=\"");
+                if (si != -1) {
+                    int siEnd = clean.indexOf('"', si + 4);
+                    if (siEnd != -1) clean.remove(si, siEnd - si + 1);
+                }
+            }
+
+            // Insert s="X" customFormat="1" before closing >
+            bool selfClose = clean.endsWith("/>");
+            QByteArray insert = QString(" s=\"%1\" customFormat=\"1\"").arg(styleIdx).toUtf8();
+            if (selfClose)
+                clean.insert(clean.size() - 2, insert);
+            else
+                clean.insert(clean.size() - 1, insert);
+
+            out.append(clean);
+        } else {
+            out.append(rowTag);
+        }
+
+        pos = tagEnd + 1;
+    }
+
+    return out;
+}
+
+// Append two fills+xfs to styles.xml and return {blueXfIdx, greyXfIdx}.
+// Returns {-1,-1} on failure. Safe to call even if fills/xfs already exist.
+static QPair<int,int> injectHighlightStyles(QByteArray& stylesXml)
+{
+    if (stylesXml.isEmpty()) return {-1,-1};
+
+    //  Helper: read count="N" from a tag, return N and the byte range [countStart, countEnd]
+    // Returns -1 if not found.
+    auto readCount = [&](const QByteArray& tag) -> int {
+        int tagPos = stylesXml.indexOf(tag);
+        if (tagPos == -1) return -1;
+        int cc = stylesXml.indexOf("count=\"", tagPos);
+        if (cc == -1) return -1;
+        int ccEnd = stylesXml.indexOf('"', cc + 7);
+        if (ccEnd == -1) return -1;
+        bool ok = false;
+        int n = stylesXml.mid(cc + 7, ccEnd - cc - 7).toInt(&ok);
+        return ok ? n : -1;
+    };
+
+    auto updateCount = [&](const QByteArray& tag, int newCount) {
+        int tagPos = stylesXml.indexOf(tag);
+        if (tagPos == -1) return;
+        int cc = stylesXml.indexOf("count=\"", tagPos);
+        if (cc == -1) return;
+        int ccEnd = stylesXml.indexOf('"', cc + 7);
+        if (ccEnd == -1) return;
+        // replace count="OLD" with count="NEW"
+        stylesXml.replace(cc, ccEnd - cc + 1,
+            QString("count=\"%1\"").arg(newCount).toUtf8());
+    };
+
+    // Dark blue for mapped rows (matching JSON mappings)
+    const QByteArray blueFill =
+        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF1F4E79\"/><bgColor indexed=\"64\"/></patternFill></fill>";
+    // Light blue for other rows
+    const QByteArray lightBlueFill =
+        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFBDD7EE\"/><bgColor indexed=\"64\"/></patternFill></fill>";
+
+    int fillCount = readCount("<fills ");
+    if (fillCount < 0) return {-1,-1};
+    int blueFillIdx = fillCount;
+    int lightBlueFillIdx = fillCount + 1;
+
+    // Insert fills then update count (count tag comes BEFORE </fills>, so update first)
+    updateCount("<fills ", fillCount + 2);
+    stylesXml.replace("</fills>", blueFill + lightBlueFill + "</fills>");
+
+    int xfCount = readCount("<cellXfs");
+    if (xfCount < 0) return {-1,-1};
+    int blueXfIdx = xfCount;
+    int lightBlueXfIdx = xfCount + 1;
+
+    // Dark blue with white text and underline for mapped rows
+    QByteArray blueXf = QString(
+        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"%1\" borderId=\"0\" applyFill=\"1\" applyFont=\"1\">"
+        "<font><color rgb=\"FFFFFFFF\"/><u/></font></xf>")
+        .arg(blueFillIdx).toUtf8();
+    // Light blue with default text for other rows
+    QByteArray lightBlueXf = QString(
+        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"%1\" borderId=\"0\" applyFill=\"1\"/>")
+        .arg(lightBlueFillIdx).toUtf8();
+
+    // Update count before inserting (count tag comes before </cellXfs>)
+    updateCount("<cellXfs", xfCount + 2);
+    stylesXml.replace("</cellXfs>", blueXf + lightBlueXf + "</cellXfs>");
+
+    return {blueXfIdx, lightBlueXfIdx};
+}
 
 bool ExcelHandler::copyFullSheet(const QString& srcKey, const QString& srcSheet,
                                  const QString& destKey, const QString& newSheetName,
@@ -2609,7 +2910,84 @@ bool ExcelHandler::copyFullSheet(const QString& srcKey, const QString& srcSheet,
         dst.cachedZipEntries[dstRelsPath] = relsStr.toUtf8();
     }
 
-    //    Step 5: Store sheet XML in destination
+    //    Step 5: Convert shared strings to inline, then convert any inline string cells
+    //    that contain numeric/currency values into proper <v> numeric cells.
+    //    This mirrors what transferEntry does (getCellValue → toDouble → setCellValue),
+    //    ensuring no currency symbols survive in the copied sheet.
+    {
+        // First resolve shared string indices to inline text
+        sheetXml = convertSharedToInline(sheetXml, src.sharedStrings);
+
+        // Now convert inline string cells that contain numeric/currency text to <v> cells
+        QString xmlStr = QString::fromUtf8(sheetXml);
+
+        // Match full <c ...> ... </c> cells that are inlineStr
+        static const QRegularExpression inlineCellRx(
+            QStringLiteral("<c\\b([^>]*)t=\"inlineStr\"([^>]*)>(.*?)</c>"),
+            QRegularExpression::DotMatchesEverythingOption | QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression tTextRx(
+            QStringLiteral("<t[^>]*>([^<]*)</t>"),
+            QRegularExpression::DotMatchesEverythingOption);
+        static const QRegularExpression currencySymRx(
+            QStringLiteral("[$\\u20ac\\u00a3\\u00a5\\u20b9]"));
+
+        struct Hit { qsizetype start; qsizetype len; QString replacement; };
+        QVector<Hit> hits;
+
+        auto it = inlineCellRx.globalMatch(xmlStr);
+        while (it.hasNext()) {
+            auto m = it.next();
+            auto tMatch = tTextRx.match(m.captured(3));
+            if (!tMatch.hasMatch()) continue;
+
+            QString text = tMatch.captured(1).trimmed();
+
+            // Check if it contains a currency symbol
+            bool hasCurrency = text.contains(currencySymRx)
+                || text.contains(QRegularExpression(QStringLiteral("\\bkn\\b"), QRegularExpression::CaseInsensitiveOption));
+            if (!hasCurrency) continue;
+
+            // Try to parse as numeric
+            QString cleaned = text;
+            cleaned.remove(currencySymRx);
+            cleaned.remove(QRegularExpression(QStringLiteral("\\bkn\\b"), QRegularExpression::CaseInsensitiveOption));
+            cleaned.remove(QRegularExpression(QStringLiteral("[^0-9.,\\-]")));
+
+            // Handle both . and , as decimal separator
+            int lastDot = cleaned.lastIndexOf('.');
+            int lastComma = cleaned.lastIndexOf(',');
+            if (lastDot != -1 && lastComma != -1) {
+                if (lastComma > lastDot) { cleaned.remove('.'); cleaned.replace(',', '.'); }
+                else { cleaned.remove(','); }
+            } else if (lastComma != -1) {
+                cleaned.replace(',', '.');
+            }
+
+            bool ok = false;
+            double val = cleaned.toDouble(&ok);
+            if (!ok) continue;
+
+            // Build replacement: drop t="inlineStr", replace <is><t>...</t></is> with <v>number</v>
+            QString attrs1 = m.captured(1);
+            QString attrs2 = m.captured(2);
+            QString numStr = QString::number(val, 'f', 2);
+            QString replacement = QStringLiteral("<c") + attrs1 + attrs2 + QStringLiteral("><v>")
+                                + numStr + QStringLiteral("</v></c>");
+            hits.append({ m.capturedStart(0), m.capturedLength(0), replacement });
+        }
+
+        int converted = 0;
+        for (int i = hits.size() - 1; i >= 0; --i) {
+            xmlStr.replace(hits[i].start, hits[i].len, hits[i].replacement);
+            converted++;
+        }
+
+        if (converted > 0) {
+            sheetXml = xmlStr.toUtf8();
+            qDebug() << "[copyFullSheet] Converted" << converted << "currency text cells to numeric";
+        }
+    }
+
     // Use rawSheetOverrides so the save logic picks it up
     dst.rawSheetOverrides[targetName] = sheetXml;
     dst.cachedZipEntries[dstSheetPath] = sheetXml;
@@ -3310,64 +3688,58 @@ QSet<int> ExcelHandler::buildMappingRowSet(const QString& mappingsPath, const QS
     return mappingRows;
 }
 
-// ── Static free-function versions for use by applyRowColorsHelper ──
-static QByteArray extractStyleSectionFree(const QByteArray& stylesXml, const QString& tagName, int& count) {
-    count = 0;
-    QString startTagBase = QString("<%1").arg(tagName);
-    int tagStart = stylesXml.indexOf(startTagBase.toUtf8());
-    if (tagStart == -1) return QByteArray();
-    int countAttr = stylesXml.indexOf("count=\"", tagStart);
-    int tagClose = stylesXml.indexOf(">", tagStart);
-    if (countAttr != -1 && countAttr < tagClose) {
-        int countEnd = stylesXml.indexOf('"', countAttr + 7);
-        if (countEnd != -1)
-            count = stylesXml.mid(countAttr + 7, countEnd - countAttr - 7).toInt();
-    }
-    QString endTag = QString("</%1>").arg(tagName);
-    int tagEnd = stylesXml.indexOf(endTag.toUtf8(), tagClose);
-    if (tagEnd == -1) return QByteArray();
-    return stylesXml.mid(tagClose + 1, tagEnd - tagClose - 1);
-}
-
-static void replaceStyleSectionFree(QByteArray& stylesXml, const QString& tagName, const QByteArray& newInnerXml, int newCount) {
-    QString startTagBase = QString("<%1").arg(tagName);
-    int tagStart = stylesXml.indexOf(startTagBase.toUtf8());
-    if (tagStart == -1) return;
-    int tagClose = stylesXml.indexOf(">", tagStart);
-    int countAttr = stylesXml.indexOf("count=\"", tagStart);
-    if (countAttr != -1 && countAttr < tagClose) {
-        int countEnd = stylesXml.indexOf('"', countAttr + 7);
-        if (countEnd != -1)
-            stylesXml.replace(countAttr + 7, countEnd - countAttr - 7, QString::number(newCount).toUtf8());
-    }
-    tagClose = stylesXml.indexOf(">", tagStart);
-    QString endTag = QString("</%1>").arg(tagName);
-    int tagEnd = stylesXml.indexOf(endTag.toUtf8(), tagClose);
-    if (tagEnd != -1)
-        stylesXml.replace(tagClose + 1, tagEnd - tagClose - 1, newInnerXml);
-}
-
-static void applyRowColorsHelper(QByteArray& sheetStr, QByteArray& stylesXml, const QSet<int>& mappingRows)
+// Apply row colors to a copied sheet
+void ExcelHandler::applyRowColors(WorkbookData& dst, const QString& sheetPath,
+                                   const QSet<int>& mappingRows,
+                                   int /*xfOffsetLightBlue*/, int /*xfOffsetDarkBlue*/)
 {
-    // 1. Add light blue + dark blue fills
-    int fillCount = 0;
-    QByteArray fills = extractStyleSectionFree(stylesXml, "fills", fillCount);
-    int lightBlueFillId = fillCount;
-    int darkBlueFillId  = fillCount + 1;
-    fills.append("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFBDD7EE\"/><bgColor indexed=\"64\"/></patternFill></fill>");
-    fills.append("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF1F4E79\"/><bgColor indexed=\"64\"/></patternFill></fill>");
-    replaceStyleSectionFree(stylesXml, "fills", fills, fillCount + 2);
+    if (!dst.cachedZipEntries.contains(sheetPath)) return;
+    if (!dst.cachedZipEntries.contains("xl/styles.xml")) return;
 
-    // 2. Add white font for dark blue rows
+    QByteArray stylesXml = dst.cachedZipEntries["xl/styles.xml"];
+
+    // 1. Add light blue + dark blue fills (with smart reuse)
+    int fillCount = 0;
+    QByteArray fills = extractStyleSection(stylesXml, "fills", fillCount);
+    int lightBlueFillId = -1;
+    int darkBlueFillId = -1;
+
+    // Use regex to find existing fill IDs for our colors
+    QRegularExpression fillRe("<fill\\b[^>]*>.*?rgb=\"([^\"]+)\".*?</fill>", QRegularExpression::DotMatchesEverythingOption | QRegularExpression::CaseInsensitiveOption);
+    auto fillIt = fillRe.globalMatch(QString::fromUtf8(fills));
+    int currentIdx = 0;
+    while (fillIt.hasNext()) {
+        auto m = fillIt.next();
+        QString rgb = m.captured(1).toUpper();
+        if (rgb == "FFBDD7EE") lightBlueFillId = currentIdx;
+        else if (rgb == "FF1F4E79") darkBlueFillId = currentIdx;
+        currentIdx++;
+    }
+
+    if (lightBlueFillId == -1) {
+        lightBlueFillId = fillCount++;
+        fills.append("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFBDD7EE\"/><bgColor indexed=\"64\"/></patternFill></fill>");
+    }
+    if (darkBlueFillId == -1) {
+        darkBlueFillId = fillCount++;
+        fills.append("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF1F4E79\"/><bgColor indexed=\"64\"/></patternFill></fill>");
+    }
+    replaceStyleSection(stylesXml, "fills", fills, fillCount);
+
+    // 2. Parse original fonts for cloning
     int fontCount = 0;
-    QByteArray fonts = extractStyleSectionFree(stylesXml, "fonts", fontCount);
-    int whiteFontId = fontCount;
-    fonts.append("<font><color rgb=\"FFFFFFFF\"/><sz val=\"11\"/><name val=\"Calibri\"/></font>");
-    replaceStyleSectionFree(stylesXml, "fonts", fonts, fontCount + 1);
+    QByteArray fontsXml = extractStyleSection(stylesXml, "fonts", fontCount);
+    QStringList originalFonts;
+    QRegularExpression fontItemRe("<font\\b[^>]*/?>(?:.*?</font>)?", QRegularExpression::DotMatchesEverythingOption);
+    auto fontMatchIt = fontItemRe.globalMatch(QString::fromUtf8(fontsXml));
+    while (fontMatchIt.hasNext()) originalFonts.append(fontMatchIt.next().captured(0));
+
+    // Cache for white versions of original fonts
+    QMap<int, int> fontCache; // originalFontId -> whiteFontId
 
     // 3. Parse existing cellXfs into list
     int xfCount = 0;
-    QByteArray cellXfsRaw = extractStyleSectionFree(stylesXml, "cellXfs", xfCount);
+    QByteArray cellXfsRaw = extractStyleSection(stylesXml, "cellXfs", xfCount);
     QStringList originalXfs;
     QRegularExpression xfRe("<xf\\b[^>]*/?>(?:.*?</xf>)?", QRegularExpression::DotMatchesEverythingOption);
     auto xfIt = xfRe.globalMatch(QString::fromUtf8(cellXfsRaw));
@@ -3377,58 +3749,96 @@ static void applyRowColorsHelper(QByteArray& sheetStr, QByteArray& stylesXml, co
     QMap<QPair<int, bool>, int> styleCache;
     int nextXfIndex = originalXfs.size();
 
-    // Helper: clone a style with new fill (and white font for dark rows)
+    // 3. Define adaptive style mapping logic (clones fonts/fills as they are used)
     auto getColoredXf = [&](int oldXf, bool isDark) -> int {
         if (oldXf < 0 || oldXf >= originalXfs.size()) return oldXf;
         QPair<int, bool> key(oldXf, isDark);
         if (styleCache.contains(key)) return styleCache[key];
+        
         QString newXf = originalXfs.at(oldXf);
         int fillId = isDark ? darkBlueFillId : lightBlueFillId;
 
         auto safeSet = [](QString& xf, const QString& attr, int val) {
-            QRegularExpressionMatch m = QRegularExpression(attr + "=\"(\\d+)\"").match(xf);
-            if (m.hasMatch()) xf.replace(m.capturedStart(1), m.capturedLength(1), QString::number(val));
-            else if (xf.contains("/>")) xf.replace("/>", QString(" %1=\"%2\"/>").arg(attr).arg(val));
-            else xf.replace(">", QString(" %1=\"%2\">").arg(attr).arg(val));
+            QRegularExpression re("\\b" + attr + "=\"(\\d+)\"");
+            QRegularExpressionMatch m = re.match(xf);
+            if (m.hasMatch()) {
+                xf.replace(m.capturedStart(1), m.capturedLength(1), QString::number(val));
+            } else {
+                int firstGt = xf.indexOf('>');
+                if (firstGt != -1) {
+                    int insertPos = firstGt;
+                    if (insertPos > 0 && xf[insertPos - 1] == '/') insertPos--;
+                    xf.insert(insertPos, QString(" %1=\"%2\"").arg(attr).arg(val));
+                }
+            }
+        };
+
+        auto getWhiteFont = [&](int originalFontId) -> int {
+            if (originalFontId < 0 || originalFontId >= originalFonts.size()) return originalFontId;
+            if (fontCache.contains(originalFontId)) return fontCache[originalFontId];
+            
+            QString newFont = originalFonts.at(originalFontId);
+            QRegularExpression colorRe("<color\\b[^>]*/>");
+            newFont.replace(colorRe, "<color rgb=\"FFFFFFFF\"/>");
+            
+            int newFontId = originalFonts.size();
+            originalFonts.append(newFont);
+            fontCache[originalFontId] = newFontId;
+            return newFontId;
         };
 
         safeSet(newXf, "fillId", fillId);
-        if (!newXf.contains("applyFill=")) {
-            if (newXf.contains("/>")) newXf.replace("/>", " applyFill=\"1\"/>");
-            else newXf.replace(">", " applyFill=\"1\">");
-        }
-        if (isDark) {
-            safeSet(newXf, "fontId", whiteFontId);
-            if (!newXf.contains("applyFont=")) {
-                if (newXf.contains("/>")) newXf.replace("/>", " applyFont=\"1\"/>");
-                else newXf.replace(">", " applyFont=\"1\">");
+        safeSet(newXf, "applyFill", 1);
+
+        // Remove currency symbols by swapping to a standard numeric format ID (4 = #,##0.00)
+        // This is safe because it only affects the newly cloned style for highlighted rows.
+        QRegularExpression nfIdRe("\\bnumFmtId=\"(\\d+)\"");
+        QRegularExpressionMatch nfm = nfIdRe.match(newXf);
+        if (nfm.hasMatch()) {
+            int oldNfId = nfm.captured(1).toInt();
+            // Standard currency formats: 5-8, 164+ 
+            // Swapping to 4 ensures a clean numeric display without symbols.
+            if (oldNfId >= 5) {
+                safeSet(newXf, "numFmtId", 4); 
+                safeSet(newXf, "applyNumberFormat", 1);
             }
         }
+
+        if (isDark) {
+            QRegularExpression fIdRe("\\bfontId=\"(\\d+)\"");
+            QRegularExpressionMatch fm = fIdRe.match(newXf);
+            int oldFontId = fm.hasMatch() ? fm.captured(1).toInt() : 0;
+            int whiteFontId = getWhiteFont(oldFontId);
+            
+            safeSet(newXf, "fontId", whiteFontId);
+            safeSet(newXf, "applyFont", 1);
+        }
+        
         originalXfs.append(newXf);
         styleCache[key] = nextXfIndex;
         return nextXfIndex++;
     };
 
     // 4. Walk sheet XML and remap cell s= attributes
-    QString sheetStrQ = QString::fromUtf8(sheetStr);
+    QString sheetStr = QString::fromUtf8(dst.cachedZipEntries[sheetPath]);
     QRegularExpression rowStartRe("<row\\b[^>]*\\br=\"(\\d+)\"");
     QRegularExpression sAttrRe("\\bs=\"(\\d+)\"");
     int currentRow = 0;
     QString result;
-    result.reserve(sheetStrQ.size() + sheetStrQ.size() / 8);
+    result.reserve(sheetStr.size() + sheetStr.size() / 8);
     int pos = 0;
 
-    while (pos < sheetStrQ.size()) {
-        int nextRow  = sheetStrQ.indexOf("<row ", pos);
-        int nextCell = sheetStrQ.indexOf("<c ",   pos);
+    while (pos < sheetStr.size()) {
+        int nextRow  = sheetStr.indexOf("<row ", pos);
+        int nextCell = sheetStr.indexOf("<c ",   pos);
         int nextTag = -1; bool isRow = false;
         if (nextRow != -1 && (nextCell == -1 || nextRow < nextCell)) { nextTag = nextRow;  isRow = true;  }
         else if (nextCell != -1)                                       { nextTag = nextCell; isRow = false; }
-        if (nextTag == -1) { result.append(sheetStrQ.mid(pos)); break; }
-        result.append(sheetStrQ.mid(pos, nextTag - pos));
-        int tagEnd = sheetStrQ.indexOf('>', nextTag);
-        if (tagEnd == -1) { result.append(sheetStrQ.mid(nextTag)); break; }
-        QString tag = sheetStrQ.mid(nextTag, tagEnd - nextTag + 1);
+        if (nextTag == -1) { result.append(sheetStr.mid(pos)); break; }
+        result.append(sheetStr.mid(pos, nextTag - pos));
+        int tagEnd = sheetStr.indexOf('>', nextTag);
+        if (tagEnd == -1) { result.append(sheetStr.mid(nextTag)); break; }
+        QString tag = sheetStr.mid(nextTag, tagEnd - nextTag + 1);
         if (isRow) {
             QRegularExpressionMatch rm = rowStartRe.match(tag);
             if (rm.hasMatch()) currentRow = rm.captured(1).toInt();
@@ -3449,28 +3859,25 @@ static void applyRowColorsHelper(QByteArray& sheetStr, QByteArray& stylesXml, co
         pos = tagEnd + 1;
     }
 
-    sheetStr = result.toUtf8();
-    
-    // 5. Write updated styles with new cloned XFs
-    if (nextXfIndex > xfCount) {
-        replaceStyleSectionFree(stylesXml, "cellXfs", originalXfs.join("").toUtf8(), nextXfIndex);
+    dst.cachedZipEntries[sheetPath] = result.toUtf8();
+
+    // 5. Write updated styles with new cloned Fonts and XFs
+    bool stylesChanged = false;
+    if (originalFonts.size() > fontCount) {
+        replaceStyleSection(stylesXml, "fonts", originalFonts.join("").toUtf8(), originalFonts.size());
+        stylesChanged = true;
     }
-}
-
-void ExcelHandler::applyRowColors(WorkbookData& dst, const QString& sheetPath,
-                                   const QSet<int>& mappingRows,
-                                   int /*xfOffsetLightBlue*/, int /*xfOffsetDarkBlue*/)
-{
-    if (!dst.cachedZipEntries.contains(sheetPath)) return;
-    if (!dst.cachedZipEntries.contains("xl/styles.xml")) return;
-
-    QByteArray sheetStr = dst.cachedZipEntries[sheetPath];
-    QByteArray stylesXml = dst.cachedZipEntries["xl/styles.xml"];
+    if (nextXfIndex > xfCount) {
+        replaceStyleSection(stylesXml, "cellXfs", originalXfs.join("").toUtf8(), nextXfIndex);
+        stylesChanged = true;
+    }
     
-    applyRowColorsHelper(sheetStr, stylesXml, mappingRows);
-    
-    dst.cachedZipEntries[sheetPath] = sheetStr;
-    dst.cachedZipEntries["xl/styles.xml"] = stylesXml;
+    if (stylesChanged) {
+        dst.cachedZipEntries["xl/styles.xml"] = stylesXml;
+    }
+
+    qInfo() << "[applyRowColors] Done. New Fonts:" << (originalFonts.size() - fontCount)
+            << "New XFs:" << (nextXfIndex - xfCount);
 }
 
 QVector<QString> ExcelHandler::parseCellXfs(const QByteArray& stylesXml)

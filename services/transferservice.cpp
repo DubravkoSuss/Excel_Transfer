@@ -27,27 +27,36 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
     // If the mapping card has "Copy full sheet" checked, copy the entire source
     // sheet XML into the destination workbook instead of doing a row transfer.
     if (entry.copyFullSheet) {
-        const QString srcKey   = QString("%1_%2_%3")
-                                     .arg(entry.month, QString::number(year),
-                                          entry.sourceFileType);
-        const QString srcSheet = entry.sourceSheetTemplate;
-        const QString newName  = entry.customSheetName.isEmpty()
-                                 ? srcSheet : entry.customSheetName;
-
-        qInfo() << "[COPY_SHEET] Copying sheet" << srcSheet
-                << "from" << srcKey << "→" << destKey << "as" << newName;
-
-        bool ok = m_handler->copyFullSheet(srcKey, srcSheet, destKey, newName);
-        if (!ok) {
-            result.error = QString("copyFullSheet failed: %1 → %2").arg(srcSheet, newName);
-            qWarning() << result.error;
+        if (entry.sourceFileType == "traffic_mott") {
+            qWarning() << "[COPY_SHEET] traffic_mott copyFullSheet disabled; using row transfer instead.";
         } else {
-            if (!entry.insertAfterSheet.isEmpty())
-                m_handler->setInsertAfter(destKey, newName, entry.insertAfterSheet);
-            result.cellsTransferred = 1;
+            const QString srcKey   = QString("%1_%2_%3")
+                                         .arg(entry.month, QString::number(year),
+                                              entry.sourceFileType);
+            const QString srcSheet = entry.sourceSheetTemplate;
+            const QString newName  = entry.customSheetName.isEmpty()
+                                     ? srcSheet : entry.customSheetName;
+
+            qInfo() << "[COPY_SHEET] Copying sheet" << srcSheet
+                    << "from" << srcKey << "→" << destKey << "as" << newName;
+
+            bool ok = m_handler->copyFullSheet(srcKey, srcSheet, destKey, newName);
+            if (!ok) {
+                result.error = QString("copyFullSheet failed: %1 → %2").arg(srcSheet, newName);
+                qWarning() << result.error;
+            } else {
+                if (!entry.insertAfterSheet.isEmpty())
+                    m_handler->setInsertAfter(destKey, newName, entry.insertAfterSheet);
+                result.cellsTransferred = 1;
+            }
+            return result;
         }
-        return result;
     }
+
+    if (entry.copyFullSheet && entry.sourceFileType == "traffic_mott") {
+        // fall through to normal row-based transfer
+    }
+
 
     // Use entry.month if set, otherwise derive from destKey (format: "Month_year_cost_control")
     QString month = entry.month;
