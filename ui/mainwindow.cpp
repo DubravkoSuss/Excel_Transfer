@@ -1001,7 +1001,8 @@ void MainWindow::onHybridExecute(const HybridTransferConfig& config)
     auto* hybridDialog = new QProgressDialog(
         "Hybrid Transfer starting...", QString(), 0, 100, this);
     hybridDialog->setWindowTitle("Hybrid Transfer Progress");
-    hybridDialog->setWindowModality(Qt::ApplicationModal);
+    hybridDialog->setWindowModality(Qt::NonModal);
+    hybridDialog->setWindowFlags(hybridDialog->windowFlags() | Qt::WindowStaysOnTopHint);
     hybridDialog->setMinimumDuration(0);
     hybridDialog->setAutoClose(false);
     hybridDialog->setAutoReset(false);
