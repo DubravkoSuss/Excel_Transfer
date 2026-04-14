@@ -4,7 +4,7 @@
 #include <QString>
 #include <QVector>
 #include <QPair>
-#include "../core/mappingmodel.h"
+#include "../../core/mappingmodel.h"
 
 struct HybridTransferConfig {
     // Periods assigned to Execute All (normal cell-by-cell transfer)

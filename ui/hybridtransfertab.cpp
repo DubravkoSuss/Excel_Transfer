@@ -1,5 +1,6 @@
 #include "hybridtransfertab.h"
 #include "mainwindow.h"
+#include "../features/mappings/mappingrow.h"
 #include <QFrame>
 #include <QLabel>
 #include <QHeaderView>
