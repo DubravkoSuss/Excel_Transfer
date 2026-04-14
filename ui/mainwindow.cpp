@@ -2148,6 +2148,17 @@ void MainWindow::onPauseTransfer()
     }
 }
 
+void MainWindow::loadRTForHybrid()
+{
+    // Identical to onLoadRT but skips guardBusy — called from hybrid worker
+    // where the busy state may still be set from the previous phase.
+    m_isTransferRunning = false;
+    m_isLoadingPeriods  = false;
+    m_isLoadingRT       = false;
+    m_fillAllRunning    = false;
+    onLoadRT();
+}
+
 void MainWindow::onLoadRT()
 {
     if (guardBusy("LoadRT")) return;

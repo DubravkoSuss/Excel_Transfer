@@ -255,13 +255,15 @@ void HybridWorker::runExecuteRT(
     // Calling them directly from the worker thread causes UI deadlocks (onMonthToggled etc.)
 
     // Step 1+2: Select periods and load RT on the main thread
+    // Use loadRTForHybrid() which resets busy flags before calling onLoadRT()
+    // so the guardBusy check doesn't block the load after Execute All phase.
     QTimer::singleShot(0, m_mainWindow, [this, periods]() {
         if (m_stopped) return;
         m_mainWindow->clearAllSelections();
         for (const auto& period : periods) {
             m_mainWindow->selectPeriod(period.first, period.second);
         }
-        m_mainWindow->onLoadRT();
+        m_mainWindow->loadRTForHybrid();
     });
 
     // Step 3: Connect to RT finished signal (one-shot)
