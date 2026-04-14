@@ -997,46 +997,75 @@ void MainWindow::onHybridExecute(const HybridTransferConfig& config)
 
     m_hybridWorker = new HybridWorker(this, this);
 
+    // Create hybrid progress dialog
+    auto* hybridDialog = new QProgressDialog(
+        "Hybrid Transfer starting...", QString(), 0, 100, this);
+    hybridDialog->setWindowTitle("Hybrid Transfer Progress");
+    hybridDialog->setWindowModality(Qt::ApplicationModal);
+    hybridDialog->setMinimumDuration(0);
+    hybridDialog->setAutoClose(false);
+    hybridDialog->setAutoReset(false);
+    hybridDialog->setCancelButton(nullptr);
+    hybridDialog->setMinimumWidth(420);
+    hybridDialog->setValue(0);
+    hybridDialog->show();
+
     connect(m_hybridWorker, &HybridWorker::phaseStarted,
-        this, [this](const QString& phase) {
+        this, [this, hybridDialog](const QString& phase) {
             updateStatusBar(QString("Hybrid: Starting %1...").arg(phase));
             qInfo() << "[Hybrid] Phase started:" << phase;
-            // Forward to tab for UI updates
+            if (hybridDialog) {
+                hybridDialog->setLabelText(QString("Phase: %1\nStarting...").arg(phase));
+            }
             if (m_hybridTransferTab) {
                 m_hybridTransferTab->onPhaseStarted(phase);
             }
         });
 
     connect(m_hybridWorker, &HybridWorker::phaseFinished,
-        this, [this](const QString& phase, bool success) {
+        this, [this, hybridDialog](const QString& phase, bool success) {
             QString status = success ? "completed" : "FAILED";
-            updateStatusBar(
-                QString("Hybrid: %1 %2").arg(phase, status));
+            updateStatusBar(QString("Hybrid: %1 %2").arg(phase, status));
             qInfo() << "[Hybrid] Phase finished:" << phase << status;
-            // Forward to tab for UI updates
+            if (hybridDialog) {
+                hybridDialog->setLabelText(
+                    QString("Phase: %1 — %2").arg(phase, status));
+            }
             if (m_hybridTransferTab) {
                 m_hybridTransferTab->onPhaseFinished(phase, success);
             }
         });
 
     connect(m_hybridWorker, &HybridWorker::progressUpdate,
-        this, [this](int percent, const QString& msg) {
+        this, [this, hybridDialog](int percent, const QString& msg) {
             m_progressBar->setVisible(true);
             m_progressBar->setValue(percent);
             updateStatusBar(msg);
-            // Forward to tab for UI updates
+            if (hybridDialog) {
+                hybridDialog->setValue(percent);
+                hybridDialog->setLabelText(msg);
+            }
             if (m_hybridTransferTab) {
                 m_hybridTransferTab->onProgressUpdate(percent, msg);
             }
         });
 
     connect(m_hybridWorker, &HybridWorker::allFinished,
-        this, [this](bool success, const QString& summary) {
+        this, [this, hybridDialog](bool success, const QString& summary) {
             m_progressBar->setVisible(false);
             updateStatusBar(success
                 ? "Hybrid transfer completed successfully"
                 : "Hybrid transfer completed with errors");
             qInfo().noquote() << "[Hybrid]" << summary;
+
+            if (hybridDialog) {
+                hybridDialog->setValue(100);
+                hybridDialog->setLabelText(success
+                    ? "Hybrid transfer completed successfully!"
+                    : "Hybrid transfer completed with errors.");
+                hybridDialog->close();
+                hybridDialog->deleteLater();
+            }
 
             showToast(success
                 ? "Hybrid transfer complete!"
@@ -1044,7 +1073,6 @@ void MainWindow::onHybridExecute(const HybridTransferConfig& config)
                 success ? ToastWidget::Success : ToastWidget::Warning,
                 5000);
 
-            // Forward to tab for UI updates
             if (m_hybridTransferTab) {
                 m_hybridTransferTab->onAllFinished(success, summary);
             }
