@@ -39,9 +39,9 @@ double ExcelHandler::parseNumericString(const QString& val, bool* ok)
         return 0.0;
     }
 
-    // 1. Strip known currency symbols and signs
+    // 1. Strip known currency symbols and signs (actual unicode chars, not escape sequences)
     static const QRegularExpression currencyRx(
-        QStringLiteral("[$\\u20ac\\u00a3\\u00a5\\u20b9]"), // $, €, £, ¥, ₹
+        QString::fromUtf8("[$\xe2\x82\xac\xc2\xa3\xc2\xa5\xe2\x82\xb9]"), // $, €, £, ¥, ₹
         QRegularExpression::CaseInsensitiveOption);
     
     QString cleaned = val.trimmed();
@@ -3000,7 +3000,7 @@ bool ExcelHandler::copyFullSheet(const QString& srcKey, const QString& srcSheet,
             QStringLiteral("<t[^>]*>([^<]*)</t>"),
             QRegularExpression::DotMatchesEverythingOption);
         static const QRegularExpression currencySymRx(
-            QStringLiteral("[$\\u20ac\\u00a3\\u00a5\\u20b9]"));
+            QString::fromUtf8("[$\xe2\x82\xac\xc2\xa3\xc2\xa5\xe2\x82\xb9]")); // $, €, £, ¥, ₹
 
         struct Hit { qsizetype start; qsizetype len; QString replacement; };
         QVector<Hit> hits;

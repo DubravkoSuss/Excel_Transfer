@@ -251,14 +251,18 @@ void HybridWorker::runExecuteRT(
         return;
     }
 
-    // Step 1: Select periods
-    m_mainWindow->clearAllSelections();
-    for (const auto& period : periods) {
-        m_mainWindow->selectPeriod(period.first, period.second);
-    }
+    // All MainWindow calls must happen on the main (UI) thread via QTimer::singleShot.
+    // Calling them directly from the worker thread causes UI deadlocks (onMonthToggled etc.)
 
-    // Step 2: Load RT
-    m_mainWindow->onLoadRT();
+    // Step 1+2: Select periods and load RT on the main thread
+    QTimer::singleShot(0, m_mainWindow, [this, periods]() {
+        if (m_stopped) return;
+        m_mainWindow->clearAllSelections();
+        for (const auto& period : periods) {
+            m_mainWindow->selectPeriod(period.first, period.second);
+        }
+        m_mainWindow->onLoadRT();
+    });
 
     // Step 3: Connect to RT finished signal (one-shot)
     QMetaObject::Connection conn;
@@ -266,7 +270,6 @@ void HybridWorker::runExecuteRT(
         this, [this, conn](bool success, const QString& summary) {
             disconnect(conn);
 
-            // Use current phase to determine which phase just finished
             if (m_currentPhase == Phase::Phase1) {
                 m_phase1Success = success;
                 m_phase1Summary = summary;
@@ -280,8 +283,8 @@ void HybridWorker::runExecuteRT(
             }
         });
 
-    // Step 4: Trigger Execute RT after Load RT completes
-    QTimer::singleShot(2000, m_mainWindow, [this]() {
+    // Step 4: Trigger Execute RT after Load RT completes (give load time to finish)
+    QTimer::singleShot(2500, m_mainWindow, [this]() {
         if (!m_stopped) {
             m_mainWindow->onRollingTransfer();
         }
