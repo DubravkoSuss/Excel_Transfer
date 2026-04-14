@@ -254,21 +254,11 @@ void HybridWorker::runExecuteRT(
     // All MainWindow calls must happen on the main (UI) thread via QTimer::singleShot.
     // Calling them directly from the worker thread causes UI deadlocks (onMonthToggled etc.)
 
-    // Step 1+2: Select periods and load RT on the main thread
-    // Use loadRTForHybrid() which resets busy flags before calling onLoadRT()
-    // so the guardBusy check doesn't block the load after Execute All phase.
-    QTimer::singleShot(0, m_mainWindow, [this, periods]() {
-        if (m_stopped) return;
-        // Pass periods directly — avoids getSelectedPeriods() reading stale UI checkboxes
-        m_mainWindow->loadRTForHybrid(periods);
-    });
-
-    // Step 3: Connect to RT finished signal (one-shot)
-    QMetaObject::Connection conn;
-    conn = connect(m_mainWindow, &MainWindow::rollingTransferFinished,
-        this, [this, conn](bool success, const QString& summary) {
-            disconnect(conn);
-
+    // Step 1: Connect rollingTransferFinished BEFORE triggering load/execute
+    QMetaObject::Connection connFinished;
+    connFinished = connect(m_mainWindow, &MainWindow::rollingTransferFinished,
+        this, [this, connFinished](bool success, const QString& summary) {
+            disconnect(connFinished);
             if (m_currentPhase == Phase::Phase1) {
                 m_phase1Success = success;
                 m_phase1Summary = summary;
@@ -282,10 +272,20 @@ void HybridWorker::runExecuteRT(
             }
         });
 
-    // Step 4: Trigger Execute RT after Load RT completes (give load time to finish)
-    QTimer::singleShot(2500, m_mainWindow, [this]() {
-        if (!m_stopped) {
-            m_mainWindow->onRollingTransfer();
-        }
+    // Step 2: When chain is ready, immediately trigger onRollingTransfer (no blind timer)
+    QMetaObject::Connection connChain;
+    connChain = connect(m_mainWindow, &MainWindow::rtChainReady,
+        this, [this, connChain]() {
+            disconnect(connChain);
+            if (!m_stopped) {
+                qInfo() << "[HybridWorker] RT chain ready — triggering onRollingTransfer";
+                m_mainWindow->onRollingTransfer();
+            }
+        });
+
+    // Step 3: Build the chain on the main thread
+    QTimer::singleShot(0, m_mainWindow, [this, periods]() {
+        if (m_stopped) return;
+        m_mainWindow->loadRTForHybrid(periods);
     });
 }

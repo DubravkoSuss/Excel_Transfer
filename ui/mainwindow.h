@@ -123,6 +123,7 @@ signals:
     // Hybrid transfer signals
     void transferFinished(bool success, const QString& summary);
     void rollingTransferFinished(bool success, const QString& summary);
+    void rtChainReady();  // Emitted by loadRTForHybrid when m_rollingChain is built
 
 private slots:
     // onGeneratePeriodRows() removed — period rows now auto-generate on year checkbox toggle
@@ -190,6 +191,7 @@ public:
     void onRollingTransfer();
     void onLoadRT();
     void loadRTForHybrid(const QVector<QPair<QString,int>>& periods);  // Hybrid-safe RT load with explicit periods
+
     // Option B: bypass load step — execute using pre-collected mapping items directly
     void executeAllWithItems(const QVector<MappingItem>& items);
 

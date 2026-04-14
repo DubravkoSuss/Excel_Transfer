@@ -2222,6 +2222,7 @@ void MainWindow::loadRTForHybrid(const QVector<QPair<QString,int>>& periods)
     m_btnRollingTransfer->setEnabled(true);
     m_isLoadingRT = false;
     qInfo() << "[loadRTForHybrid] RT chain built:" << m_rollingChain.size() << "steps";
+    emit rtChainReady();
 }
 
 void MainWindow::onLoadRT()
