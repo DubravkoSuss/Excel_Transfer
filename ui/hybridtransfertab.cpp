@@ -226,6 +226,27 @@ HybridTransferTab::HybridTransferTab(MainWindow* mainWindow, QWidget* parent)
     tableHeader->addWidget(tableTitle);
     tableHeader->addStretch();
 
+    // Move Up / Move Down buttons
+    m_moveUpBtn = new QPushButton("▲ Up");
+    m_moveDownBtn = new QPushButton("▼ Down");
+    QString moveBtnStyle =
+        "QPushButton {"
+        "  background: white; color: #374151; font-weight: 600;"
+        "  padding: 6px 12px; border-radius: 6px; font-size: 12px;"
+        "  border: 1px solid #D1D5DB;"
+        "}"
+        "QPushButton:hover { background: #F3F4F6; border-color: #3B82F6; }"
+        "QPushButton:pressed { background: #E5E7EB; }"
+        "QPushButton:disabled { background: #F3F4F6; color: #9CA3AF; border-color: #E5E7EB; }";
+    m_moveUpBtn->setStyleSheet(moveBtnStyle);
+    m_moveDownBtn->setStyleSheet(moveBtnStyle);
+    m_moveUpBtn->setEnabled(false);
+    m_moveDownBtn->setEnabled(false);
+    m_moveUpBtn->setToolTip("Move selected row up (RT rows move as a block)");
+    m_moveDownBtn->setToolTip("Move selected row down (RT rows move as a block)");
+    tableHeader->addWidget(m_moveUpBtn);
+    tableHeader->addWidget(m_moveDownBtn);
+
     m_removeBtn = new QPushButton("✗ Remove");
     m_removeBtn->setStyleSheet(
         "QPushButton {"
@@ -338,7 +359,9 @@ HybridTransferTab::HybridTransferTab(MainWindow* mainWindow, QWidget* parent)
 
     rightLayout->addWidget(execCard);
 
-    // ── Execute Button ──
+    // ── Execute + Reset Buttons ──
+    QHBoxLayout* bottomBtnLayout = new QHBoxLayout();
+    
     m_executeBtn = new QPushButton("▶ Execute Hybrid Transfer");
     m_executeBtn->setMaximumWidth(350);
     m_executeBtn->setEnabled(false);
@@ -356,7 +379,28 @@ HybridTransferTab::HybridTransferTab(MainWindow* mainWindow, QWidget* parent)
         "QPushButton:pressed { background: #5B21B6; }"
         "QPushButton:disabled { background: #E5E7EB; color: #9CA3AF; }"
     );
-    rightLayout->addWidget(m_executeBtn);
+    bottomBtnLayout->addWidget(m_executeBtn);
+
+    QPushButton* resetAllBtn = new QPushButton("↺ Reset All");
+    resetAllBtn->setMaximumWidth(200);
+    resetAllBtn->setStyleSheet(
+        "QPushButton {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #FEF2F2, stop:1 #FEE2E2);"
+        "  color: #DC2626; font-weight: 600;"
+        "  padding: 12px 24px; border-radius: 8px; font-size: 14px; border: none;"
+        "}"
+        "QPushButton:hover {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+        "    stop:0 #FEE2E2, stop:1 #FECACA);"
+        "}"
+        "QPushButton:pressed { background: #FECACA; }"
+    );
+    connect(resetAllBtn, &QPushButton::clicked, this, &HybridTransferTab::onResetAll);
+    bottomBtnLayout->addWidget(resetAllBtn);
+    bottomBtnLayout->addStretch();
+
+    rightLayout->addLayout(bottomBtnLayout);
     rightLayout->addStretch();
     
     // Add right content to splitter
@@ -374,8 +418,13 @@ HybridTransferTab::HybridTransferTab(MainWindow* mainWindow, QWidget* parent)
             this, &HybridTransferTab::onClearAll);
     connect(m_executeBtn, &QPushButton::clicked,
             this, &HybridTransferTab::onExecute);
+    connect(m_moveUpBtn, &QPushButton::clicked,
+            this, &HybridTransferTab::onMoveUp);
+    connect(m_moveDownBtn, &QPushButton::clicked,
+            this, &HybridTransferTab::onMoveDown);
     connect(m_table, &QTableWidget::itemSelectionChanged, this, [this]() {
         m_removeBtn->setEnabled(!m_table->selectedItems().isEmpty());
+        updateMoveButtons();
     });
 }
 
@@ -457,15 +506,16 @@ void HybridTransferTab::onAddPeriod()
     
     for (const QString& month : selectedMonths) {
         QString key = QString("%1_%2").arg(month, year);
-        
+
         // Check for duplicate
         if (m_assignments.contains(key)) {
             skippedCount++;
             skippedMonths.append(month);
             continue;
         }
-        
+
         m_assignments[key] = (type == "Execute All") ? "execute_all" : "execute_rt";
+        m_orderedKeys.append(key);   // maintain user-defined execution order
         addedCount++;
     }
     
@@ -531,16 +581,17 @@ void HybridTransferTab::onRemovePeriod()
         rowsToRemove.insert(item->row());
     }
 
-    // Build keys to remove
+    // Build keys to remove from the ordered list
     QStringList keysToRemove;
     for (int row : rowsToRemove) {
-        QString year = m_table->item(row, 0)->text();
-        QString month = m_table->item(row, 1)->text();
-        keysToRemove.append(QString("%1_%2").arg(month, year));
+        if (row < m_orderedKeys.size()) {
+            keysToRemove.append(m_orderedKeys[row]);
+        }
     }
 
     for (const QString& key : keysToRemove) {
         m_assignments.remove(key);
+        m_orderedKeys.removeAll(key);
     }
 
     populateTable();
@@ -551,7 +602,57 @@ void HybridTransferTab::onRemovePeriod()
 void HybridTransferTab::onClearAll()
 {
     m_assignments.clear();
+    m_orderedKeys.clear();
     populateTable();
+    updateSummary();
+    updateExecuteButton();
+}
+
+void HybridTransferTab::onResetAll()
+{
+    // Confirm with user before resetting everything
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this, "Reset Hybrid Mode",
+        "This will reset everything to the initial state:\n\n"
+        "• Clear all assigned periods\n"
+        "• Remove all mapping cards\n"
+        "• Reset month selections\n"
+        "• Reset execution options\n\n"
+        "Are you sure?",
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+    if (reply != QMessageBox::Yes)
+        return;
+
+    // 1. Clear all assignments and table
+    m_assignments.clear();
+    m_orderedKeys.clear();
+    populateTable();
+
+    // 2. Clear all mapping cards from the sidebar
+    if (m_mappingController) {
+        m_mappingController->clearAllMappings();
+    }
+
+    // 3. Reset month checkboxes
+    clearAllMonths();
+
+    // 4. Reset year to current
+    m_yearCombo->setCurrentText(QString::number(QDate::currentDate().year()));
+
+    // 5. Reset transfer type to first option
+    m_transferTypeCombo->setCurrentIndex(0);
+
+    // 6. Reset execution order to default
+    m_executeAllFirstRadio->setChecked(true);
+
+    // 7. Reset progress/status UI
+    m_progressBar->setVisible(false);
+    m_progressBar->setValue(0);
+    m_phaseStatusLabel->setVisible(false);
+    m_phaseStatusLabel->setText("");
+
+    // 8. Update summary and execute button
     updateSummary();
     updateExecuteButton();
 }
@@ -562,13 +663,20 @@ void HybridTransferTab::onExecute()
     m_config = HybridTransferConfig();
     m_config.executeAllFirst = m_executeAllFirstRadio->isChecked();
 
-    for (auto it = m_assignments.constBegin();
-         it != m_assignments.constEnd(); ++it)
-    {
-        QString key = it.key();
-        QString type = it.value();
+    // Collect which months/years are Execute All vs Execute RT
+    // Use m_orderedKeys so the user-defined order is respected
+    QSet<QString> executeAllKeys;
+    QVector<QString> fallbackOrder;
+    if (m_orderedKeys.isEmpty()) {
+        for (const QString& k : m_assignments.keys())
+            fallbackOrder.append(k);
+    }
+    const QVector<QString>& ordered = m_orderedKeys.isEmpty() ? fallbackOrder : m_orderedKeys;
 
-        // Parse key: "Month_Year"
+    for (const QString& key : ordered) {
+        if (!m_assignments.contains(key)) continue;
+        QString type = m_assignments[key];
+
         int underscorePos = key.lastIndexOf('_');
         QString month = key.left(underscorePos);
         int year = key.mid(underscorePos + 1).toInt();
@@ -577,6 +685,7 @@ void HybridTransferTab::onExecute()
 
         if (type == "execute_all") {
             m_config.executeAllPeriods.append(period);
+            executeAllKeys.insert(key);
         } else {
             m_config.executeRTPeriods.append(period);
         }
@@ -588,59 +697,102 @@ void HybridTransferTab::onExecute()
         return;
     }
 
+    // Option B: collect mapping items from the sidebar for Execute All months.
+    // This lets HybridWorker bypass the async load+delay and transfer directly
+    // using the cards the user has already loaded and checked.
+    if (m_mappingController && !executeAllKeys.isEmpty()) {
+        QVector<MappingItem> allItems = m_mappingController->items();
+        for (int i = 0; i < allItems.size(); ++i) {
+            MappingRow* row = m_mappingController->rowAt(i);
+            if (!row || !row->isChecked())
+                continue;
+            const MappingItem& item = allItems[i];
+            // Only include items that belong to an Execute All period
+            QString key = QString("%1_%2").arg(item.entry.month).arg(item.year);
+            if (key.isEmpty()) {
+                // fallback: use item.month/year directly
+                key = QString("%1_%2").arg(item.month).arg(item.year);
+            }
+            if (executeAllKeys.contains(key))
+                m_config.executeAllItems.append(item);
+        }
+        qInfo() << "[HybridTab] Collected" << m_config.executeAllItems.size()
+                << "checked mapping items for Execute All";
+    }
+
     emit executeRequested(m_config);
 }
 
 void HybridTransferTab::populateTable()
 {
+    // Remember selected row(s) so we can restore selection after repopulate
+    int selectedRow = -1;
+    if (!m_table->selectedItems().isEmpty())
+        selectedRow = m_table->selectedItems().first()->row();
+
     m_table->setRowCount(0);
 
-    // Sort by year then month for clean display
-    QStringList sortedKeys = m_assignments.keys();
-    std::sort(sortedKeys.begin(), sortedKeys.end(),
-        [](const QString& a, const QString& b) {
-            // Parse "Month_Year" and sort by year, then month index
-            static const QStringList months = {
-                "January", "February", "March", "April", "May", "June",
-                "July", "August", "September", "October", "November", "December"
-            };
-            int underA = a.lastIndexOf('_');
-            int underB = b.lastIndexOf('_');
-            int yearA = a.mid(underA + 1).toInt();
-            int yearB = b.mid(underB + 1).toInt();
-            if (yearA != yearB) return yearA < yearB;
-            int monthA = months.indexOf(a.left(underA));
-            int monthB = months.indexOf(b.left(underB));
-            return monthA < monthB;
-        });
+    // Use m_orderedKeys to preserve user-defined drag/move order.
+    // Fall back to chronological sort if m_orderedKeys is somehow out of sync.
+    QVector<QString> displayOrder = m_orderedKeys;
+    if (displayOrder.isEmpty() && !m_assignments.isEmpty()) {
+        QStringList keys = m_assignments.keys();
+        std::sort(keys.begin(), keys.end(),
+            [](const QString& a, const QString& b) {
+                static const QStringList months = {
+                    "January", "February", "March", "April", "May", "June",
+                    "July", "August", "September", "October", "November", "December"
+                };
+                int underA = a.lastIndexOf('_');
+                int underB = b.lastIndexOf('_');
+                int yearA = a.mid(underA + 1).toInt();
+                int yearB = b.mid(underB + 1).toInt();
+                if (yearA != yearB) return yearA < yearB;
+                return months.indexOf(a.left(underA)) < months.indexOf(b.left(underB));
+            });
+        for (const QString& k : keys)
+            displayOrder.append(k);
+        m_orderedKeys = displayOrder; // sync
+    }
 
-    for (const QString& key : sortedKeys) {
+    for (const QString& key : displayOrder) {
+        if (!m_assignments.contains(key)) continue;
         int underscorePos = key.lastIndexOf('_');
         QString month = key.left(underscorePos);
-        QString year = key.mid(underscorePos + 1);
-        QString type = m_assignments[key];
-        QString typeDisplay = (type == "execute_all")
-                                  ? "Execute All"
-                                  : "Execute RT";
+        QString year  = key.mid(underscorePos + 1);
+        QString type  = m_assignments[key];
+        bool isRT     = (type == "execute_rt");
 
         int row = m_table->rowCount();
         m_table->insertRow(row);
 
-        m_table->setItem(row, 0, new QTableWidgetItem(year));
-        m_table->setItem(row, 1, new QTableWidgetItem(month));
+        // Subtle amber left-border tint for RT rows to hint they're grouped
+        QColor rowBg = isRT ? QColor("#FFFBEB") : QColor(Qt::transparent);
 
-        auto* typeItem = new QTableWidgetItem(typeDisplay);
-        if (type == "execute_all") {
-            typeItem->setForeground(QColor("#059669"));
-        } else {
-            typeItem->setForeground(QColor("#D97706"));
-        }
-        typeItem->setData(Qt::FontRole,
-            QFont(typeItem->font().family(), -1, QFont::Bold));
+        auto makeItem = [&](const QString& text) {
+            auto* item = new QTableWidgetItem(text);
+            if (isRT) item->setBackground(rowBg);
+            return item;
+        };
+
+        m_table->setItem(row, 0, makeItem(year));
+        m_table->setItem(row, 1, makeItem(month));
+
+        auto* typeItem = new QTableWidgetItem(isRT ? "Execute RT" : "Execute All");
+        typeItem->setForeground(QColor(isRT ? "#D97706" : "#059669"));
+        typeItem->setData(Qt::FontRole, QFont(typeItem->font().family(), -1, QFont::Bold));
+        if (isRT) typeItem->setBackground(rowBg);
         m_table->setItem(row, 2, typeItem);
 
-        m_table->setItem(row, 3, new QTableWidgetItem("Pending"));
+        auto* statusItem = makeItem("Pending");
+        m_table->setItem(row, 3, statusItem);
     }
+
+    // Restore selection
+    if (selectedRow >= 0 && selectedRow < m_table->rowCount())
+        m_table->selectRow(selectedRow);
+
+    updateMoveButtons();
 }
 
 void HybridTransferTab::updateSummary()
@@ -761,12 +913,38 @@ void HybridTransferTab::setupMappingsSidebar()
     sidebarLayout->setContentsMargins(20, 20, 20, 20);
     sidebarLayout->setSpacing(16);
     
-    // Header with title
+    // Header with title and Select All/Deselect All buttons
+    QHBoxLayout* sidebarHeaderLayout = new QHBoxLayout();
     QLabel* title = new QLabel("Row Mappings");
     title->setStyleSheet(
         "font-weight: 700; font-size: 16px; color: #1A1F36; letter-spacing: -0.3px;"
     );
-    sidebarLayout->addWidget(title);
+    sidebarHeaderLayout->addWidget(title);
+    sidebarHeaderLayout->addStretch();
+
+    QString sidebarBtnStyle =
+        "QPushButton {"
+        "  background: white; color: #374151; padding: 4px 10px;"
+        "  border: 1px solid #D1D5DB; border-radius: 4px; font-size: 11px; font-weight: 600;"
+        "}"
+        "QPushButton:hover { background: #F3F4F6; border-color: #3B82F6; }"
+        "QPushButton:pressed { background: #E5E7EB; }";
+
+    QPushButton* selectAllCardsBtn = new QPushButton("Select All");
+    selectAllCardsBtn->setStyleSheet(sidebarBtnStyle);
+    connect(selectAllCardsBtn, &QPushButton::clicked, this, [this]() {
+        if (m_mappingController) m_mappingController->setAllChecked(true);
+    });
+    sidebarHeaderLayout->addWidget(selectAllCardsBtn);
+
+    QPushButton* deselectAllCardsBtn = new QPushButton("Deselect All");
+    deselectAllCardsBtn->setStyleSheet(sidebarBtnStyle);
+    connect(deselectAllCardsBtn, &QPushButton::clicked, this, [this]() {
+        if (m_mappingController) m_mappingController->setAllChecked(false);
+    });
+    sidebarHeaderLayout->addWidget(deselectAllCardsBtn);
+
+    sidebarLayout->addLayout(sidebarHeaderLayout);
 
     // Separator line
     QFrame* separator = new QFrame();
@@ -829,4 +1007,116 @@ void HybridTransferTab::setupMappingsSidebar()
     });
     
     m_splitter->addWidget(m_mappingsSidebar);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// rtBlockFor() — returns the contiguous run of RT-row indices that contains
+// the given row index. For Execute All rows returns just { rowIndex }.
+// ─────────────────────────────────────────────────────────────────────────────
+QVector<int> HybridTransferTab::rtBlockFor(int rowIndex) const
+{
+    if (rowIndex < 0 || rowIndex >= m_orderedKeys.size())
+        return {};
+
+    const QString& key = m_orderedKeys[rowIndex];
+    if (!m_assignments.contains(key))
+        return { rowIndex };
+
+    // Execute All rows are independent — block is just itself
+    if (m_assignments[key] == "execute_all")
+        return { rowIndex };
+
+    // For RT rows, find the contiguous block they belong to.
+    // Walk backwards to the first RT in this run, then forward to the last.
+    int blockStart = rowIndex;
+    while (blockStart > 0
+           && m_assignments.value(m_orderedKeys[blockStart - 1]) == "execute_rt")
+        --blockStart;
+
+    int blockEnd = rowIndex;
+    while (blockEnd + 1 < m_orderedKeys.size()
+           && m_assignments.value(m_orderedKeys[blockEnd + 1]) == "execute_rt")
+        ++blockEnd;
+
+    QVector<int> block;
+    for (int i = blockStart; i <= blockEnd; ++i)
+        block.append(i);
+    return block;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// updateMoveButtons() — enable/disable ▲ Up / ▼ Down based on selection
+// ─────────────────────────────────────────────────────────────────────────────
+void HybridTransferTab::updateMoveButtons()
+{
+    if (m_table->selectedItems().isEmpty()) {
+        m_moveUpBtn->setEnabled(false);
+        m_moveDownBtn->setEnabled(false);
+        return;
+    }
+
+    int row = m_table->selectedItems().first()->row();
+    QVector<int> block = rtBlockFor(row);
+
+    int blockTop    = block.isEmpty() ? row : block.first();
+    int blockBottom = block.isEmpty() ? row : block.last();
+    int total       = m_orderedKeys.size();
+
+    m_moveUpBtn->setEnabled(blockTop > 0);
+    m_moveDownBtn->setEnabled(blockBottom < total - 1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// onMoveUp() — move the selected row (or RT block) one position up
+// ─────────────────────────────────────────────────────────────────────────────
+void HybridTransferTab::onMoveUp()
+{
+    if (m_table->selectedItems().isEmpty()) return;
+
+    int row = m_table->selectedItems().first()->row();
+    QVector<int> block = rtBlockFor(row);
+    if (block.isEmpty()) return;
+
+    int blockTop = block.first();
+    if (blockTop <= 0) return;  // already at top
+
+    // Move the whole block one position up by rotating the slice
+    // [blockTop-1 .. blockTop .. blockBottom] → [blockTop .. blockBottom .. blockTop-1]
+    // i.e. swap blockTop-1 with blockTop, then blockTop with blockTop+1, etc.
+    int blockBottom = block.last();
+    // Equivalent: remove element at blockTop-1 and insert after blockBottom
+    QString displaced = m_orderedKeys[blockTop - 1];
+    m_orderedKeys.removeAt(blockTop - 1);
+    m_orderedKeys.insert(blockBottom, displaced);
+
+    // Restore selection to the moved block (now one row higher)
+    int newRow = row - 1;
+    populateTable();
+    m_table->selectRow(newRow);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// onMoveDown() — move the selected row (or RT block) one position down
+// ─────────────────────────────────────────────────────────────────────────────
+void HybridTransferTab::onMoveDown()
+{
+    if (m_table->selectedItems().isEmpty()) return;
+
+    int row = m_table->selectedItems().first()->row();
+    QVector<int> block = rtBlockFor(row);
+    if (block.isEmpty()) return;
+
+    int blockBottom = block.last();
+    if (blockBottom >= m_orderedKeys.size() - 1) return;  // already at bottom
+
+    int blockTop = block.first();
+    // Remove element at blockBottom+1 and insert before blockTop
+    QString displaced = m_orderedKeys[blockBottom + 1];
+    m_orderedKeys.removeAt(blockBottom + 1);
+    m_orderedKeys.insert(blockTop, displaced);
+
+    // Restore selection to the moved block (now one row lower)
+    int newRow = row + 1;
+    populateTable();
+    m_table->selectRow(newRow);
 }

@@ -164,6 +164,8 @@ void HybridWorker::finishAll()
 void HybridWorker::runExecuteAll(
     const QVector<QPair<QString, int>>& periods)
 {
+    Q_UNUSED(periods); // periods are already encoded in executeAllItems
+
     if (!m_mainWindow) {
         m_phase1IsExecuteAll
             ? (m_phase1Success = false)
@@ -172,38 +174,65 @@ void HybridWorker::runExecuteAll(
         return;
     }
 
-    // Step 1: Temporarily select only the specified periods
-    //         in the year cards (deselect everything else)
+    // Option B: if the Hybrid tab pre-collected mapping items, use them directly
+    // and skip the async load+delay path entirely.
+    if (!m_config.executeAllItems.isEmpty()) {
+        qInfo() << "[HybridWorker] Option B: using" << m_config.executeAllItems.size()
+                << "pre-collected items — bypassing load step";
+
+        // Connect to transfer finished signal (one-shot)
+        QMetaObject::Connection conn;
+        conn = connect(m_mainWindow, &MainWindow::transferFinished,
+            this, [this, conn](bool success, const QString& summary) {
+                disconnect(conn);
+                if (m_currentPhase == Phase::Phase1) {
+                    m_phase1Success = success;
+                    m_phase1Summary = summary;
+                    qInfo() << "[HybridWorker] Phase 1 (Execute All/B) finished:" << success;
+                    onPhase1Finished();
+                } else if (m_currentPhase == Phase::Phase2) {
+                    m_phase2Success = success;
+                    m_phase2Summary = summary;
+                    qInfo() << "[HybridWorker] Phase 2 (Execute All/B) finished:" << success;
+                    onPhase2Finished();
+                }
+            });
+
+        // Call directly on next event loop turn — no load delay needed
+        QTimer::singleShot(0, m_mainWindow, [this]() {
+            if (!m_stopped) {
+                m_mainWindow->executeAllWithItems(m_config.executeAllItems);
+            }
+        });
+        return;
+    }
+
+    // Fallback (Option A): select periods, load, then execute after delay
+    qInfo() << "[HybridWorker] Option A: loading periods then executing";
     m_mainWindow->clearAllSelections();
-    for (const auto& period : periods) {
+    for (const auto& period : m_config.executeAllPeriods) {
         m_mainWindow->selectPeriod(period.first, period.second);
     }
 
-    // Step 2: Load mappings for those periods
     m_mainWindow->onLoadSelectedPeriods();
 
-    // Step 3: Connect to transfer finished signal (one-shot)
     QMetaObject::Connection conn;
     conn = connect(m_mainWindow, &MainWindow::transferFinished,
         this, [this, conn](bool success, const QString& summary) {
             disconnect(conn);
-
-            // Use current phase to determine which phase just finished
             if (m_currentPhase == Phase::Phase1) {
                 m_phase1Success = success;
                 m_phase1Summary = summary;
-                qInfo() << "[HybridWorker] Phase 1 (Execute All) finished:" << success;
+                qInfo() << "[HybridWorker] Phase 1 (Execute All/A) finished:" << success;
                 onPhase1Finished();
             } else if (m_currentPhase == Phase::Phase2) {
                 m_phase2Success = success;
                 m_phase2Summary = summary;
-                qInfo() << "[HybridWorker] Phase 2 (Execute All) finished:" << success;
+                qInfo() << "[HybridWorker] Phase 2 (Execute All/A) finished:" << success;
                 onPhase2Finished();
             }
         });
 
-    // Step 4: Trigger Execute All
-    //         Use a short delay so Load finishes first
     QTimer::singleShot(2000, m_mainWindow, [this]() {
         if (!m_stopped) {
             m_mainWindow->onExecuteAll();

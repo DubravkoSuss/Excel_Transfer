@@ -1,3 +1,11 @@
+
+Get-ChildItem -Recurse -Include *.h, *.cpp -Exclude *build* | Get-Content | Measure-Object -Line
+
+
+
+
+
+
 # Excel Transfer Tool
 
 A Qt-based desktop application for automating Excel data transfers between workbooks for the Finance Department at MZLZ Zagreb Airport.

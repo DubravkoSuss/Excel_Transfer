@@ -1905,6 +1905,119 @@ void MainWindow::onExecuteAll()
     qInfo() << "onExecuteAll [12] worker started";
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// executeAllWithItems  –  Option B for HybridWorker: skip load step, transfer
+// directly using pre-collected mapping items from the Hybrid tab sidebar.
+// ─────────────────────────────────────────────────────────────────────────────
+void MainWindow::executeAllWithItems(const QVector<MappingItem>& items)
+{
+    if (m_isTransferRunning) {
+        qInfo() << "executeAllWithItems BLOCKED (transfer already running)";
+        return;
+    }
+    if (items.isEmpty()) {
+        qWarning() << "executeAllWithItems: no items provided";
+        emit transferFinished(false, "No mapping items to execute.");
+        return;
+    }
+
+    m_isTransferRunning = true;
+    m_isTransferStopRequested = false;
+    m_transferSuccessfulMappings = 0;
+    m_transferFailedMappings.clear();
+
+    // Clear full-sheet overrides
+    if (m_excelHandler) {
+        for (const MappingItem& item : items) {
+            const QString destKey = QString("%1_%2_cost_control")
+                                        .arg(item.month).arg(item.year);
+            m_excelHandler->resetOverrides(destKey);
+        }
+    }
+
+    // Build TransferMapping list from provided items
+    QVector<TransferMapping> transferMappings;
+    transferMappings.reserve(items.size());
+    for (int i = 0; i < items.size(); ++i) {
+        const MappingItem& item = items[i];
+        TransferMapping tm;
+        tm.entry    = item.entry;
+        tm.year     = item.year;
+        tm.month    = item.month.isEmpty() ? item.entry.month : item.month;
+        tm.rowIndex = i;
+        tm.destPath = findCostControlPath(tm.month, tm.year);
+        if (tm.destPath.isEmpty()) {
+            qWarning() << "executeAllWithItems: no dest path for" << tm.month << tm.year;
+        }
+        transferMappings.append(tm);
+    }
+
+    auto abortSetup = [this](const QString& reason) {
+        m_isTransferRunning = false;
+        emit transferFinished(false, reason);
+    };
+
+    if (transferMappings.isEmpty()) {
+        abortSetup("No transfer mappings could be built.");
+        return;
+    }
+
+    // Path resolution (same as onExecuteAll)
+    QMap<QString, QString> resolvedPaths;
+    for (TransferMapping& tm : transferMappings) {
+        QString resolvedDest;
+        if (tm.destPath.isEmpty()) {
+            // keep empty — TransferWorker will skip
+            continue;
+        }
+        const QString destLabel = QString("Destination workbook for %1 %2")
+                                      .arg(tm.month).arg(tm.year);
+        if (!resolveWorkbookPath(this, destLabel, tm.destPath, resolvedPaths, &resolvedDest)) {
+            abortSetup("Transfer cancelled by user.");
+            return;
+        }
+        tm.destPath = resolvedDest;
+
+        if (!tm.entry.sourcePath.trimmed().isEmpty()) {
+            QString resolvedSource;
+            const QString sourceLabel = QString("Source workbook for %1 %2 (%3)")
+                                            .arg(tm.month).arg(tm.year)
+                                            .arg(tm.entry.sourceFileType);
+            if (!resolveWorkbookPath(this, sourceLabel,
+                                     tm.entry.sourcePath, resolvedPaths, &resolvedSource)) {
+                abortSetup("Transfer cancelled by user.");
+                return;
+            }
+            tm.entry.sourcePath = resolvedSource;
+        }
+    }
+
+    // Clean up previous worker
+    if (m_transferWorker) {
+        m_transferWorker->stop();
+        if (!m_transferWorker->wait(3000)) {
+            m_transferWorker->terminate();
+            m_transferWorker->wait();
+        }
+        delete m_transferWorker;
+        m_transferWorker = nullptr;
+    }
+
+    m_transferTotalMappings = transferMappings.size();
+    m_transferWorker = new TransferWorker(this);
+    m_transferWorker->setMappings(transferMappings, m_transferService, m_destFolder);
+
+    connect(m_transferWorker, &TransferWorker::progress,
+            this, &MainWindow::onTransferProgress);
+    connect(m_transferWorker, &TransferWorker::rowDone,
+            this, &MainWindow::onTransferRowDone);
+    connect(m_transferWorker, &TransferWorker::finished,
+            this, &MainWindow::onTransferFinished);
+
+    qInfo() << "executeAllWithItems: starting worker with" << transferMappings.size() << "mappings";
+    m_transferWorker->start();
+}
+
 void MainWindow::onTransferRowDone(int index, bool success, const QString& message)
 {
     MappingRow* row = m_mappingController->rowAt(index);

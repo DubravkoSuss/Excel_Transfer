@@ -239,6 +239,7 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
             }
 
             bool shouldDivide = divideBy1000;
+            total = std::round(total);
             if (shouldDivide) {
                 if (sourceFileType == "pax") {
                     const bool paxDivide = (destRow >= 5 && destRow <= 7);
@@ -449,6 +450,7 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
         if (!hasValue) continue;
         // JG: rows 212/216/218/222/226 (PAX/EUR section) divide by +1000 (no sign flip); all other rows by -1000
         if (destColumn == "JG") {
+            total = std::round(total);
             if (destRow == 212 || destRow == 216 || destRow == 218
                 || destRow == 222 || destRow == 226) {
                 total /= 1000.0;
@@ -546,9 +548,9 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
 
                         // Apply ÷1000 for PAX rows (MZLZ rows 5 and 7)
                         double value = ytdSum;
+                        value = std::round(value);
                         if (mzlzRow == 5 || mzlzRow == 7)
                             value /= 1000.0;
-                        value = std::round(value);
 
                         qInfo() << "[STATUS] YTD-TRAFFIC paxRow" << paxRow
                                 << "sumG.." << paxColStr << "=" << ytdSum
@@ -567,9 +569,9 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
                         if (monthlyColIndex > 0) {
                             QVariant monthVal = m_handler->getCellValue(paxKey, paxSheet, paxRow, paxColIdx);
                             double singleMonth = monthVal.canConvert<double>() ? monthVal.toDouble() : 0.0;
+                            singleMonth = std::round(singleMonth);
                             if (mzlzRow == 5 || mzlzRow == 7)
                                 singleMonth /= 1000.0;
-                            singleMonth = std::round(singleMonth);
                             m_handler->setCellValue(destKey, destSheet, mzlzRow, monthlyColIndex, singleMonth);
                             result.cellsTransferred++;
                         }

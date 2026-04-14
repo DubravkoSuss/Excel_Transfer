@@ -189,6 +189,8 @@ public:
     void onExecuteAll();
     void onRollingTransfer();
     void onLoadRT();
+    // Option B: bypass load step — execute using pre-collected mapping items directly
+    void executeAllWithItems(const QVector<MappingItem>& items);
 
 private:
     void setupUI();

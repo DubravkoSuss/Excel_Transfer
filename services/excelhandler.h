@@ -119,6 +119,7 @@ public:
     // Static versions for use in free functions
     static QString staticColumnToLetter(int col);
     static int staticLetterToColumn(const QString& letter);
+    static double parseNumericString(const QString& val, bool* ok = nullptr);
 
 signals:
     void loadProgress(int current, int total, const QString& message);

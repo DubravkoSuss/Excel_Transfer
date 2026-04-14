@@ -4,6 +4,7 @@
 #include <QString>
 #include <QVector>
 #include <QPair>
+#include "../core/mappingmodel.h"
 
 struct HybridTransferConfig {
     // Periods assigned to Execute All (normal cell-by-cell transfer)
@@ -12,6 +13,10 @@ struct HybridTransferConfig {
     // Periods assigned to Execute RT (rolling transfer)
     QVector<QPair<QString, int>> executeRTPeriods;     // {month, year}
     
+    // Pre-collected mapping items for Execute All (from Hybrid tab's sidebar)
+    // When non-empty, skips the load step and transfers directly
+    QVector<MappingItem> executeAllItems;
+
     // Execution order: true = Execute All first, then RT
     // false = RT first, then Execute All
     bool executeAllFirst = true;

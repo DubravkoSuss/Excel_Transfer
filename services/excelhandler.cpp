@@ -32,6 +32,55 @@ static QString buildCellRef(const QString& col, int row)
     return QString("%1%2").arg(col.toUpper()).arg(row);
 }
 
+double ExcelHandler::parseNumericString(const QString& val, bool* ok)
+{
+    if (val.isEmpty()) {
+        if (ok) *ok = false;
+        return 0.0;
+    }
+
+    // 1. Strip known currency symbols and signs
+    static const QRegularExpression currencyRx(
+        QStringLiteral("[$\\u20ac\\u00a3\\u00a5\\u20b9]"), // $, €, £, ¥, ₹
+        QRegularExpression::CaseInsensitiveOption);
+    
+    QString cleaned = val.trimmed();
+    cleaned.remove(currencyRx);
+    
+    // 2. Handle Croatian 'kn' and other word-based symbols
+    cleaned.remove(QRegularExpression(QStringLiteral("\\bkn\\b"), QRegularExpression::CaseInsensitiveOption));
+    
+    // 3. Remove all characters except digits, minus sign, dot, and comma
+    cleaned.remove(QRegularExpression(QStringLiteral("[^0-9.,\\-]")));
+    
+    if (cleaned.isEmpty()) {
+        if (ok) *ok = false;
+        return 0.0;
+    }
+
+    // 4. Handle European vs Standard formatting (dot/comma)
+    // If both exist, the LAST one is almost certainly the decimal separator.
+    int lastDot = cleaned.lastIndexOf('.');
+    int lastComma = cleaned.lastIndexOf(',');
+    
+    if (lastDot != -1 && lastComma != -1) {
+        if (lastComma > lastDot) {
+            // "1.234,56" -> remove dots, replace comma with dot
+            cleaned.remove('.');
+            cleaned.replace(',', '.');
+        } else {
+            // "1,234.56" -> remove commas
+            cleaned.remove(',');
+        }
+    } else if (lastComma != -1) {
+        // "1234,56" -> replace comma with dot
+        cleaned.replace(',', '.');
+    }
+    // If only dot exists ("1234.56"), it's already standard.
+
+    return cleaned.toDouble(ok);
+}
+
 static constexpr int kMaxExcelRows = 1048576;
 static constexpr int kMaxExcelCols = 16384;
 
@@ -1854,6 +1903,8 @@ bool ExcelHandler::saveWorkbook(const QString& key, const QString& outputPath)
 
     bool ok = saveOpenXML(dest, wb);
 
+    // Apply NumberFormat = General to copied sheets via COM
+    // This is the Excel equivalent of Ctrl+A → Format Cells → General
     if (ok && !wb.rawSheetOverrides.isEmpty()) {
         QString comError;
         const QStringList sheetsToFormat = wb.rawSheetOverrides.keys();
@@ -2006,6 +2057,10 @@ bool ExcelHandler::applyNumberFormatGeneral(const QString& filePath, const QStri
 
     qDebug() << "[COM-FORMAT] Starting for:" << filePath << "sheets=" << sheetNames;
 
+    // Remove Mark of the Web (Zone.Identifier ADS) to bypass Protected View
+    // Equivalent to right-clicking the file → Properties → Unblock
+    QFile::remove(filePath + ":Zone.Identifier");
+
     QAxObject excel("Excel.Application");
     if (excel.isNull()) {
         QString err = "COM: Excel.Application not available  – is Excel installed?";
@@ -2016,7 +2071,7 @@ bool ExcelHandler::applyNumberFormatGeneral(const QString& filePath, const QStri
 
     excel.setProperty("Visible", false);
     excel.setProperty("DisplayAlerts", false);
-    excel.setProperty("AutomationSecurity", 3);
+    excel.setProperty("AutomationSecurity", 1);  // msoAutomationSecurityLow — allow macros
 
     QAxObject* workbooks = excel.querySubObject("Workbooks");
     if (!workbooks) {
@@ -2075,34 +2130,49 @@ bool ExcelHandler::applyNumberFormatGeneral(const QString& filePath, const QStri
         return false;
     }
 
+    // Build a VBA macro that formats all target sheets at once
+    QString vbaCode = "Sub FixCurrencyFormat()\n";
     for (const QString& sheetName : sheetNames) {
-        QAxObject* sheet = sheets->querySubObject("Item(const QVariant&)", sheetName);
-        if (!sheet || sheet->isNull()) {
-            qWarning() << "[COM-FORMAT] Sheet not found:" << sheetName;
-            if (sheet) delete sheet;
-            continue;
-        }
+        QString escaped = sheetName;
+        escaped.replace("\"", "\"\"");
+        vbaCode += QString("    ThisWorkbook.Sheets(\"%1\").Cells.NumberFormat = \"General\"\n").arg(escaped);
+    }
+    vbaCode += "End Sub\n";
 
-        QAxObject* cells = sheet->querySubObject("Cells");
-        if (cells && !cells->isNull()) {
-            // Step 1: Select the sheet (Ctrl+A)
-            sheet->dynamicCall("Select()");
-            QThread::msleep(300);
-            cells->dynamicCall("Select()");
-            QThread::msleep(500);
+    qDebug() << "[COM-FORMAT] Injecting VBA macro:\n" << vbaCode;
 
-            QAxObject* selection = excel.querySubObject("Selection");
-            if (selection && !selection->isNull()) {
-                selection->setProperty("NumberFormat", "General");
-                selection->setProperty("NumberFormatLocal", "General");
-                delete selection;
-            } else {
-                cells->setProperty("NumberFormat", "General");
-                cells->setProperty("NumberFormatLocal", "General");
+    QAxObject* vbProject = wb->querySubObject("VBProject");
+    if (!vbProject || vbProject->isNull()) {
+        qWarning() << "[COM-FORMAT] Cannot access VBProject — falling back to direct approach";
+        for (const QString& sheetName : sheetNames) {
+            QAxObject* sheet = sheets->querySubObject("Item(const QVariant&)", sheetName);
+            if (sheet && !sheet->isNull()) {
+                QAxObject* cells = sheet->querySubObject("Cells");
+                if (cells && !cells->isNull()) {
+                    cells->setProperty("NumberFormat", "General");
+                    delete cells;
+                }
+                delete sheet;
             }
         }
-        if (cells) delete cells;
-        delete sheet;
+    } else {
+        QAxObject* vbComponents = vbProject->querySubObject("VBComponents");
+        QAxObject* module = vbComponents->querySubObject("Add(int)", 1);
+        QAxObject* codeModule = module ? module->querySubObject("CodeModule") : nullptr;
+        if (codeModule && !codeModule->isNull()) {
+            codeModule->dynamicCall("AddFromString(const QString&)", vbaCode);
+            excel.dynamicCall("Run(const QString&)", "FixCurrencyFormat");
+            qDebug() << "[COM-FORMAT] VBA macro executed successfully";
+            vbComponents->dynamicCall("Remove(IDispatch*)", module->asVariant());
+            qDebug() << "[COM-FORMAT] Temporary VBA module removed";
+        } else {
+            qWarning() << "[COM-FORMAT] Failed to get CodeModule — skipping VBA macro";
+        }
+
+        if (codeModule) delete codeModule;
+        if (module) delete module;
+        delete vbComponents;
+        delete vbProject;
     }
 
     wb->dynamicCall("Save()");
@@ -2270,7 +2340,7 @@ QVariant ExcelHandler::getCellValue(const QString& key, const QString& sheetName
 
     const QString& val = cellIt->value;
     bool ok = false;
-    double d = val.toDouble(&ok);
+    double d = parseNumericString(val, &ok);
     if (ok) return d;
     return val;
 }
@@ -2432,9 +2502,9 @@ int ExcelHandler::transferData(const QString& srcKey, const QString& srcSheet, c
         bool isNum = false;
         if (cellIt != srcSheetCopy.cells.end()) {
             if (!cellIt->value.isEmpty()) {
-                numVal = cellIt->value.toDouble(&isNum);
+                numVal = parseNumericString(cellIt->value, &isNum);
                 if (!isNum) {
-                    // Non-numeric string value  ” write 0 to dest (don't copy formula references)
+                    // Still not a number after cleaning -> write 0 to dest
                     isNum = true;
                     numVal = 0.0;
                 }
@@ -2456,6 +2526,7 @@ int ExcelHandler::transferData(const QString& srcKey, const QString& srcSheet, c
 
         if (isNum) {
             if (divideBy1000) {
+                numVal = std::round(numVal);
                 if (sourceFileType == "pax") {
                     const bool shouldDivide = (destRows[i] >= 5 && destRows[i] <= 7);
                     if (shouldDivide) {
@@ -2942,29 +3013,8 @@ bool ExcelHandler::copyFullSheet(const QString& srcKey, const QString& srcSheet,
 
             QString text = tMatch.captured(1).trimmed();
 
-            // Check if it contains a currency symbol
-            bool hasCurrency = text.contains(currencySymRx)
-                || text.contains(QRegularExpression(QStringLiteral("\\bkn\\b"), QRegularExpression::CaseInsensitiveOption));
-            if (!hasCurrency) continue;
-
-            // Try to parse as numeric
-            QString cleaned = text;
-            cleaned.remove(currencySymRx);
-            cleaned.remove(QRegularExpression(QStringLiteral("\\bkn\\b"), QRegularExpression::CaseInsensitiveOption));
-            cleaned.remove(QRegularExpression(QStringLiteral("[^0-9.,\\-]")));
-
-            // Handle both . and , as decimal separator
-            int lastDot = cleaned.lastIndexOf('.');
-            int lastComma = cleaned.lastIndexOf(',');
-            if (lastDot != -1 && lastComma != -1) {
-                if (lastComma > lastDot) { cleaned.remove('.'); cleaned.replace(',', '.'); }
-                else { cleaned.remove(','); }
-            } else if (lastComma != -1) {
-                cleaned.replace(',', '.');
-            }
-
             bool ok = false;
-            double val = cleaned.toDouble(&ok);
+            double val = parseNumericString(text, &ok);
             if (!ok) continue;
 
             // Build replacement: drop t="inlineStr", replace <is><t>...</t></is> with <v>number</v>
@@ -2986,6 +3036,17 @@ bool ExcelHandler::copyFullSheet(const QString& srcKey, const QString& srcSheet,
             sheetXml = xmlStr.toUtf8();
             qDebug() << "[copyFullSheet] Converted" << converted << "currency text cells to numeric";
         }
+    }
+
+    // Step 5b: Strip style= from <col> elements to prevent inherited currency formats
+    // Cells without explicit s= attribute inherit from <col style="X">, which may point to currency formats
+    {
+        QString xmlStr = QString::fromUtf8(sheetXml);
+        static const QRegularExpression colStyleRe(
+            QStringLiteral("(<col\\b[^>]*?)\\s*style=\"\\d+\"([^>]*?)"),
+            QRegularExpression::CaseInsensitiveOption);
+        xmlStr.replace(colStyleRe, "\\1\\2");
+        sheetXml = xmlStr.toUtf8();
     }
 
     // Use rawSheetOverrides so the save logic picks it up
@@ -3550,7 +3611,19 @@ ExcelHandler::MergeStylesResult ExcelHandler::mergeStyles(WorkbookData& src, Wor
                 QRegularExpressionMatch idMatch = idRe.match(entry);
                 if (!idMatch.hasMatch()) continue;
                 int oldId = idMatch.captured(1).toInt();
-                if (oldId < 164) { numFmtRemap[oldId] = oldId; }
+                // Check if this is a currency format — strip to General (numFmtId=0)
+                QRegularExpression fcRe("formatCode=\"([^\"]*)\"");
+                QRegularExpressionMatch fcMatch = fcRe.match(entry);
+                bool isCurrency = false;
+                if (fcMatch.hasMatch()) {
+                    QString fmt = fcMatch.captured(1);
+                    isCurrency = fmt.contains(QChar(0x20AC)) || fmt.contains(QChar(0x00A3)) || fmt.contains("$")
+                              || fmt.contains(QChar(0x00A5)) || fmt.contains(QChar(0x20B9))
+                              || fmt.contains("&quot;");  // XML-encoded currency wrappers
+                }
+                if (isCurrency) {
+                    numFmtRemap[oldId] = 0; // Map to General — no currency symbol
+                } else if (oldId < 164) { numFmtRemap[oldId] = oldId; }
                 else { numFmtRemap[oldId] = nextId; entry.replace(QString("numFmtId=\"%1\"").arg(oldId), QString("numFmtId=\"%1\"").arg(nextId)); newEntries.append(entry.toUtf8()); nextId++; }
             }
             if (!newEntries.isEmpty()) { dstNf.append(newEntries); replaceStyleSection(dstStyles, "numFmts", dstNf, dstNfCount + (nextId - maxId - 1)); }
@@ -3576,8 +3649,9 @@ ExcelHandler::MergeStylesResult ExcelHandler::mergeStyles(WorkbookData& src, Wor
         QString xf = xfIt.next().captured(0);
         shiftAttr(xf, "fontId",   fontOffset);
         shiftAttr(xf, "borderId", borderOffset);
+        // Force ALL source cellXf entries to numFmtId=0 (General) — eliminates currency symbols
         QRegularExpressionMatch m = QRegularExpression("numFmtId=\"(\\d+)\"").match(xf);
-        if (m.hasMatch()) { int oldId = m.captured(1).toInt(); if (numFmtRemap.contains(oldId)) xf.replace(m.capturedStart(1), m.capturedLength(1), QString::number(numFmtRemap[oldId])); }
+        if (m.hasMatch()) { xf.replace(m.capturedStart(1), m.capturedLength(1), "0"); }
         mergedXfs.append(xf.toUtf8());
     }
 
@@ -3796,10 +3870,10 @@ void ExcelHandler::applyRowColors(WorkbookData& dst, const QString& sheetPath,
         QRegularExpressionMatch nfm = nfIdRe.match(newXf);
         if (nfm.hasMatch()) {
             int oldNfId = nfm.captured(1).toInt();
-            // Standard currency formats: 5-8, 164+ 
-            // Swapping to 4 ensures a clean numeric display without symbols.
-            if (oldNfId >= 5) {
-                safeSet(newXf, "numFmtId", 4); 
+            // Force all non-General formats to General (numFmtId=0).
+            // This is equivalent to "Select All → Format Cells → General" in Excel.
+            if (oldNfId != 0) {
+                safeSet(newXf, "numFmtId", 0); 
                 safeSet(newXf, "applyNumberFormat", 1);
             }
         }
