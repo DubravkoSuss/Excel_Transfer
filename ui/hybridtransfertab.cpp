@@ -83,7 +83,7 @@ HybridTransferTab::HybridTransferTab(MainWindow* mainWindow, QWidget* parent)
         "QComboBox::drop-down { border: none; }"
         "QComboBox:hover { border-color: #3B82F6; }"
     );
-    for (int y = 2024; y <= 2030; y++)
+    for (int y = 2010; y <= 2043; y++)
         m_yearCombo->addItem(QString::number(y));
     m_yearCombo->setCurrentText(QString::number(QDate::currentDate().year()));
     selRow->addWidget(m_yearCombo);

@@ -2220,6 +2220,101 @@ void MainWindow::loadRTForHybrid(const QVector<QPair<QString,int>>& periods)
     }
 
     m_btnRollingTransfer->setEnabled(true);
+
+    // ── Load mapping cards so onRollingTransfer() sees checked items ──
+    m_mappingController->clearAllMappings();
+
+    QSet<int> yearsWithOldMappings;
+    QSet<int> yearsWithNewMappings;
+    for (const auto& period : periods) {
+        int year = period.second;
+        if (year <= 2025) yearsWithOldMappings.insert(year);
+        else              yearsWithNewMappings.insert(year);
+    }
+
+    const QString jsonBase = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../JSON");
+    const QString mappingsOldPath   = QString("%1/mappings_old.json").arg(jsonBase);
+    const QString mappingsNewPath   = QString("%1/mappings.json").arg(jsonBase);
+    const QString sapYtdPath        = QString("%1/mappings_sap_ytd.json").arg(jsonBase);
+    const QString paxPath           = QString("%1/pax.json").arg(jsonBase);
+    const QString staffPath         = QString("%1/staff.json").arg(jsonBase);
+    const QString budgetRefiPath    = QString("%1/mappings_budget_refi_prev_year.json").arg(jsonBase);
+    const QString paxTransferPath   = QString("%1/mappings_pax_transfer.json").arg(jsonBase);
+    const QString trafficMottPath   = QString("%1/Traffic_mott.json").arg(jsonBase);
+
+    if (!yearsWithOldMappings.isEmpty()) m_mappingsManager->loadMappings(mappingsOldPath);
+    if (!yearsWithNewMappings.isEmpty()) m_mappingsManager->loadMappings(mappingsNewPath);
+
+    m_mappingsManager->loadSapYtdMappings(sapYtdPath);
+    m_mappingsManager->loadPaxMappings(paxPath);
+    m_mappingsManager->loadStaffMappings(staffPath);
+    m_mappingsManager->loadBudgetRefiMappings(budgetRefiPath);
+    m_mappingsManager->loadPaxTransferMappings(paxTransferPath);
+    m_mappingsManager->loadTrafficMottMappings(trafficMottPath);
+
+    for (const auto& period : periods) {
+        const QString& month = period.first;
+        int year = period.second;
+
+        for (MappingEntry entry : m_mappingsManager->getMappingsForMonthYear(month, year)) {
+            if (entry.sourceFileType == "sap_ytd") continue;
+            entry.sourceJson = (year <= 2025) ? mappingsOldPath : mappingsNewPath;
+            if (entry.sourceFileType == "sap")
+                entry.sourcePath = m_excelHandler->findSAPFile(m_destFolder, month, year);
+            else
+                entry.sourcePath = findCostControlPath(month, year);
+            m_mappingController->addMappingRow(month, year, entry);
+        }
+
+        for (MappingEntry entry : m_mappingsManager->getDynamicMappingsForMonthYear(month, year)) {
+            entry.sourceJson = budgetRefiPath;
+            entry.sourcePath = findCostControlPath(month, year);
+            m_mappingController->addMappingRow(month, year, entry);
+        }
+
+        if (m_mappingService) {
+            for (auto sel : m_mappingService->collectPaxMappings({{month, year}})) {
+                sel.entry.sourceJson = paxPath;
+                sel.entry.sourcePath = m_excelHandler->findPaxFile(m_destFolder, month, year);
+                m_mappingController->addMappingRow(sel.month, sel.year, sel.entry);
+            }
+            for (auto sel : m_mappingService->collectStaffMappings({{month, year}})) {
+                sel.entry.sourceJson = staffPath;
+                sel.entry.sourcePath = m_excelHandler->findStaffFile(m_destFolder, year);
+                m_mappingController->addMappingRow(sel.month, sel.year, sel.entry);
+            }
+        }
+
+        if (m_mappingsManager) {
+            for (MappingEntry entry : m_mappingsManager->getSapYtdMappingsForMonthYear(month, year)) {
+                entry.sourceJson = sapYtdPath;
+                entry.sourcePath = m_excelHandler->findSapYtdFile(m_destFolder, month, year);
+                m_mappingController->addMappingRow(month, year, entry);
+            }
+        }
+
+        if (m_mappingsManager) {
+            for (MappingEntry entry : m_mappingsManager->getPaxTransferMappingsForMonthYear(month, year)) {
+                entry.sourceJson = paxTransferPath;
+                entry.sourcePath = m_excelHandler->findPaxFile(m_destFolder, month, year);
+                m_mappingController->addMappingRow(month, year, entry);
+            }
+        }
+
+        if (m_mappingsManager) {
+            for (MappingEntry entry : m_mappingsManager->getTrafficMottMappingsForMonthYear(month, year)) {
+                entry.sourceJson = trafficMottPath;
+                entry.sourcePath = m_excelHandler->findPaxFile(m_destFolder, month, year);
+                m_mappingController->addMappingRow(month, year, entry);
+            }
+        }
+    }
+
+    m_noMappingsLabel->setVisible(m_mappingController->mappingCount() == 0);
+    m_mappingController->setAllChecked(true);  // auto-check so onRollingTransfer() sees them
+    qInfo() << "[loadRTForHybrid] Loaded" << m_mappingController->mappingCount() << "mapping cards (all checked)";
+    // ── End mapping card loading ──
+
     m_isLoadingRT = false;
     qInfo() << "[loadRTForHybrid] RT chain built:" << m_rollingChain.size() << "steps";
     emit rtChainReady();
