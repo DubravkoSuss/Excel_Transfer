@@ -189,7 +189,7 @@ public:
     void onExecuteAll();
     void onRollingTransfer();
     void onLoadRT();
-    void loadRTForHybrid();  // Same as onLoadRT but resets busy flags first — for hybrid mode
+    void loadRTForHybrid(const QVector<QPair<QString,int>>& periods);  // Hybrid-safe RT load with explicit periods
     // Option B: bypass load step — execute using pre-collected mapping items directly
     void executeAllWithItems(const QVector<MappingItem>& items);
 

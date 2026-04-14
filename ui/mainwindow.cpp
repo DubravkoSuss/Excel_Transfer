@@ -2177,15 +2177,51 @@ void MainWindow::onPauseTransfer()
     }
 }
 
-void MainWindow::loadRTForHybrid()
+void MainWindow::loadRTForHybrid(const QVector<QPair<QString,int>>& periods)
 {
-    // Identical to onLoadRT but skips guardBusy — called from hybrid worker
-    // where the busy state may still be set from the previous phase.
+    // Called from hybrid worker. Resets busy flags, injects periods directly
+    // (bypasses getSelectedPeriods() which reads UI checkboxes that may not
+    // yet be updated when this runs).
     m_isTransferRunning = false;
     m_isLoadingPeriods  = false;
     m_isLoadingRT       = false;
     m_fillAllRunning    = false;
-    onLoadRT();
+
+    if (guardBusy("LoadRT")) return;
+    if (!m_rollingService) return;
+
+    m_isLoadingRT = true;
+    if (m_busyTimeout) m_busyTimeout->start(10 * 60 * 1000);
+
+    if (periods.isEmpty()) {
+        showToast("No RT periods provided.", ToastWidget::Warning);
+        m_isLoadingRT = false;
+        return;
+    }
+
+    m_rollingChain = m_rollingService->buildChain(m_destFolder, periods);
+
+    QStringList missing;
+    if (!m_rollingChain.isEmpty()) {
+        const RollingStep& first = m_rollingChain.first();
+        if (first.inputPath.isEmpty() || !QFile::exists(first.inputPath)) {
+            missing << QString("Previous month file not found:\n  %1")
+                           .arg(first.inputPath.isEmpty() ? "path not found" : first.inputPath);
+        }
+    }
+    if (!missing.isEmpty()) {
+        m_rollingChain.clear();
+        m_btnRollingTransfer->setEnabled(false);
+        const QString msg = QString("Rolling Transfer cancelled — source file(s) not found:\n%1").arg(missing.join("\n"));
+        qWarning() << msg;
+        updateStatusBar("RT Load failed — source file not found");
+        m_isLoadingRT = false;
+        return;
+    }
+
+    m_btnRollingTransfer->setEnabled(true);
+    m_isLoadingRT = false;
+    qInfo() << "[loadRTForHybrid] RT chain built:" << m_rollingChain.size() << "steps";
 }
 
 void MainWindow::onLoadRT()

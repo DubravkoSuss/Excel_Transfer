@@ -259,11 +259,8 @@ void HybridWorker::runExecuteRT(
     // so the guardBusy check doesn't block the load after Execute All phase.
     QTimer::singleShot(0, m_mainWindow, [this, periods]() {
         if (m_stopped) return;
-        m_mainWindow->clearAllSelections();
-        for (const auto& period : periods) {
-            m_mainWindow->selectPeriod(period.first, period.second);
-        }
-        m_mainWindow->loadRTForHybrid();
+        // Pass periods directly — avoids getSelectedPeriods() reading stale UI checkboxes
+        m_mainWindow->loadRTForHybrid(periods);
     });
 
     // Step 3: Connect to RT finished signal (one-shot)
