@@ -189,6 +189,7 @@ public:
     void onExecuteAll();
     void onRollingTransfer();
     void onLoadRT();
+    void loadRTForHybrid();  // Same as onLoadRT but resets busy flags first — for hybrid mode
     // Option B: bypass load step — execute using pre-collected mapping items directly
     void executeAllWithItems(const QVector<MappingItem>& items);
 
@@ -357,7 +358,6 @@ private:
     // Call at the top of every UI slot that should be blocked during transfers.
     // Shows a status message and returns true if busy (caller should return immediately).
     bool guardBusy(const QString& action = QString());
-    void loadRTForHybrid();   // Same as onLoadRT but bypasses guardBusy — for hybrid mode
     QTimer* m_busyTimeout = nullptr;
     
     int m_transferTotalMappings;
