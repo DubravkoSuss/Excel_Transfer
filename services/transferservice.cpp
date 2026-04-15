@@ -263,13 +263,15 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
                 }
             }
 
-            m_handler->setCellValue(destKey, destSheet, targetRow, destColIndex, total);
+            m_handler->setCellValue(destKey, destSheet, destRow, destColIndex, total);
             result.cellsTransferred++;
-            if (sourceFileType == "traffic_mott" && targetRow != destRow) {
-                qDebug() << "[TRAFFIC_MOTT] destRow adjusted" << destRow << "->" << targetRow;
-            }
+
         }
 
+        // Q column in TRAFFIC mott 2025 sheet contains Excel SUM formulas — leave them alone.
+        // JG values in MZLZ Consolidated are now computed directly from the external
+        // TRAFFIC mott xlsx by summing G..currentMonthCol in handleSapYtd.
+    } else if (!srcRows.isEmpty()) {
         // Q column in TRAFFIC mott 2025 sheet contains Excel SUM formulas — leave them alone.
         // JG values in MZLZ Consolidated are now computed directly from the external
         // TRAFFIC mott xlsx by summing G..currentMonthCol in handleSapYtd.
