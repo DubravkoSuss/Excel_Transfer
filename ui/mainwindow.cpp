@@ -17,6 +17,7 @@
 #include "individualtransfertab.h"
 #include "fillallmonthstab.h"
 #include "hybridtransfertab.h"
+#include "comparatortab.h"
 #include "customtabbar.h"
 #include "../features/transfer/fillallworker.h"
 #include "../features/transfer/hybridworker.h"
@@ -394,6 +395,9 @@ void MainWindow::setupUI()
     
     // Create Individual Transfer tab
     createIndividualTab();
+
+    // Create Comparator tab
+    createComparatorTab();
 
 
     m_progressBar = new QProgressBar();
@@ -3594,6 +3598,12 @@ void MainWindow::populateFillAllMappingCards(MappingController* controller,
         entry.sourcePath = m_excelHandler->findPaxFile(m_destFolder, month, year);
         controller->addMappingRow(month, year, entry);
     }
+}
+
+void MainWindow::createComparatorTab()
+{
+    m_comparatorTab = new ComparatorTab(this);
+    m_tabWidget->addTab(m_comparatorTab, "Comparator");
 }
 
 void MainWindow::createFillAllTab()

@@ -11,6 +11,7 @@
 #include <QScrollArea>
 #include <QSplitter>
 #include <QSet>
+#include <QDate>
 #include <QMessageBox>
 #include "../core/mappingmodel.h"
 #include "../core/mappingcontroller.h"
@@ -146,9 +147,9 @@ FillAllMonthsTab::FillAllMonthsTab(MainWindow* mainWindow, QWidget* parent)
         "QComboBox::drop-down { border: none; }"
         "QComboBox:hover { border-color: #3B82F6; }"
     );
-    for (int y = 2024; y <= 2030; y++)
+    for (int y = 2010; y <= 2043; y++)
         m_yearCombo->addItem(QString::number(y));
-    m_yearCombo->setCurrentText("2025");
+    m_yearCombo->setCurrentText(QString::number(QDate::currentDate().year()));
     topRow->addWidget(m_yearCombo);
 
     topRow->addSpacing(20);

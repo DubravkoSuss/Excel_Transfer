@@ -18,6 +18,8 @@ add_executable(ExcelTransfer
         ui/individualtransfertab.h
         ui/fillallmonthstab.cpp
         ui/fillallmonthstab.h
+        ui/comparatortab.cpp
+        ui/comparatortab.h
         ui/hybridtransfertab.cpp
         ui/hybridtransfertab.h
         ui/customtabbar.cpp

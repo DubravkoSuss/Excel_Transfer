@@ -210,13 +210,11 @@ void MappingController::syncRowToModel(int index)
     updated.customSheetName = row->getCustomSheetName();
     updated.insertAfterSheet = row->getInsertAfterSheet();
     
-    // Also sync the basic mapping fields that can be edited in UI
-    updated.sourceSheetTemplate = row->getSourceSheet();
-    updated.sourceColumn = row->getSourceColumn();
-    updated.sourceRows = row->getSourceRows();
-    updated.destSheet = row->getDestSheet();
-    updated.destColumn = row->getDestColumn();
-    updated.destRows = row->getDestRows();
+    // NOTE: Do NOT overwrite core mapping fields (sourceSheetTemplate, sourceColumn,
+    // destSheet, destColumn, sourceRows, destRows) from UI text edits here.
+    // Those fields are authoritative from JSON and must not be clobbered by
+    // potentially empty/stale QLineEdit values when the user only intended
+    // to change ignore rows or copy-full-sheet settings.
     
     m_model->updateEntryAt(index, updated);
     

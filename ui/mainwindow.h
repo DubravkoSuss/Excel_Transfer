@@ -85,6 +85,7 @@ class FillAllMonthsTab;
 class MappingController;
 class HybridTransferTab;
 class HybridWorker;
+class ComparatorTab;
 class CustomTabWidget;
 struct FillAllScanResult;
 
@@ -204,6 +205,7 @@ private:
     void createIndividualTab();
     void createFillAllTab();
     void createHybridTab();
+    void createComparatorTab();
     
 #ifdef Q_OS_WIN
     void customizeWindowsTitleBar();
@@ -290,6 +292,7 @@ private:
     FillAllMonthsTab* m_fillAllMonthsTab = nullptr;
     HybridTransferTab* m_hybridTransferTab = nullptr;
     HybridWorker* m_hybridWorker = nullptr;
+    ComparatorTab* m_comparatorTab = nullptr;
     
     // m_btnGenerate removed — generate is now automatic on year checkbox toggle
     QPushButton* m_btnClear;
