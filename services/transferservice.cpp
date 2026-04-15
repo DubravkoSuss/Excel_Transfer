@@ -236,11 +236,6 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
             // Skip rows the user has marked to ignore
             if (entry.ignoredDestRows.contains(destRow)) continue;
 
-            // Traffic mott rows appear to be off-by-one in the destination; adjust here
-            int targetRow = destRow;
-            if (sourceFileType == "traffic_mott")
-                targetRow = qMax(1, destRow - 1);
-
             double total = 0.0;
             for (int srcRow : srcRowList) {
                 QVariant value = m_handler->getCellValue(srcKey, sourceSheet, srcRow, sourceColIndex);
