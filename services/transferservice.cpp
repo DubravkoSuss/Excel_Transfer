@@ -333,7 +333,8 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
             }
             // Always include rows 118–123 in cumulative sums
             for (int r = 115; r <= 123; ++r) rowsToSum.insert(r);
-            // Rows 16 and 18 are transfer-only — never include in cumulative IP–IZ sums
+            // Rows 13, 16 and 18 are transfer-only — never include in cumulative IP–IZ sums
+            rowsToSum.remove(13);
             rowsToSum.remove(16);
             rowsToSum.remove(18);
 
