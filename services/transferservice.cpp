@@ -5,6 +5,11 @@
 #include <QDate>
 #include <cmath>
 
+// Round to 5 decimal places: first divide by 1000, then round to keep 5 decimals
+static double roundTo5(double v) {
+    return std::round(v * 100000.0) / 100000.0;
+}
+
 TransferService::TransferService(ExcelHandler* handler, QObject* parent)
     : QObject(parent), m_handler(handler) {}
 
@@ -239,20 +244,22 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
             }
 
             bool shouldDivide = divideBy1000;
-            total = std::round(total);
             if (shouldDivide) {
                 if (sourceFileType == "pax") {
                     const bool paxDivide = (destRow >= 5 && destRow <= 7);
                     if (paxDivide) {
                         total /= 1000.0;
+                        total = roundTo5(total);
                     }
                 } else if ((sourceFileType == "sap" || sourceFileType == "sap_ytd")
                            && (destRow == 212 || destRow == 216 || destRow == 218 || destRow == 214
                                || destRow == 222 || destRow == 226)) {
                     // Rows 212-226 PAX/EUR section must not be sign-flipped
                     total /= 1000.0;
+                    total = roundTo5(total);
                 } else {
                     total /= -1000.0;
+                    total = roundTo5(total);
                 }
             }
 
@@ -326,6 +333,9 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
             }
             // Always include rows 118–123 in cumulative sums
             for (int r = 115; r <= 123; ++r) rowsToSum.insert(r);
+            // Rows 16 and 18 are transfer-only — never include in cumulative IP–IZ sums
+            rowsToSum.remove(16);
+            rowsToSum.remove(18);
 
             for (int row : rowsToSum) {
                 double cumulative = 0.0;
@@ -348,7 +358,7 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
                         // in months we didn't select, causing the Excel repair dialog.
                     }
                     if (row >= 115 && row <= 123) {
-                        val = std::round(val);
+                        val = roundTo5(val);
                     }
                     if (row == 115) {
                         qDebug() << "Cum row118" << m << baseCol << "=" << val;
@@ -360,6 +370,7 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
                 int writeIdx = (monthIdx == 0) ? 0 : monthIdx - 1;
                 const QString cumCol = cumCols.value(monthOrder[writeIdx]);
                 if (!cumCol.isEmpty()) {
+                    cumulative = roundTo5(cumulative);
                     if (row == 115) {
                         qDebug() << "Cum row118 write" << cumCol << "=" << cumulative;
                     }
@@ -450,13 +461,13 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
         if (!hasValue) continue;
         // JG: rows 212/216/218/222/226 (PAX/EUR section) divide by +1000 (no sign flip); all other rows by -1000
         if (destColumn == "JG") {
-            total = std::round(total);
             if (destRow == 212 || destRow == 216 || destRow == 218
                 || destRow == 222 || destRow == 226) {
                 total /= 1000.0;
             } else {
                 total /= -1000.0;
             }
+            total = roundTo5(total);
         }
         m_handler->setCellValue(destKey, destSheet, destRow,
                                 m_handler->letterToColumn(destColumn), total);
@@ -548,9 +559,10 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
 
                         // Apply ÷1000 for PAX rows (MZLZ rows 5 and 7)
                         double value = ytdSum;
-                        value = std::round(value);
-                        if (mzlzRow == 5 || mzlzRow == 7)
+                        if (mzlzRow == 5 || mzlzRow == 7) {
                             value /= 1000.0;
+                            value = roundTo5(value);
+                        }
 
                         qInfo() << "[STATUS] YTD-TRAFFIC paxRow" << paxRow
                                 << "sumG.." << paxColStr << "=" << ytdSum
@@ -569,9 +581,10 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
                         if (monthlyColIndex > 0) {
                             QVariant monthVal = m_handler->getCellValue(paxKey, paxSheet, paxRow, paxColIdx);
                             double singleMonth = monthVal.canConvert<double>() ? monthVal.toDouble() : 0.0;
-                            singleMonth = std::round(singleMonth);
-                            if (mzlzRow == 5 || mzlzRow == 7)
+                            if (mzlzRow == 5 || mzlzRow == 7) {
                                 singleMonth /= 1000.0;
+                                singleMonth = roundTo5(singleMonth);
+                            }
                             m_handler->setCellValue(destKey, destSheet, mzlzRow, monthlyColIndex, singleMonth);
                             result.cellsTransferred++;
                         }

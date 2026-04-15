@@ -2526,18 +2526,20 @@ int ExcelHandler::transferData(const QString& srcKey, const QString& srcSheet, c
 
         if (isNum) {
             if (divideBy1000) {
-                numVal = std::round(numVal);
                 if (sourceFileType == "pax") {
                     const bool shouldDivide = (destRows[i] >= 5 && destRows[i] <= 7);
                     if (shouldDivide) {
                         numVal = numVal / 1000.0;
+                        numVal = std::round(numVal * 100000.0) / 100000.0;
                     }
                 } else if (destRows[i] == 212 || destRows[i] == 216 || destRows[i] == 218 || destRows[i] == 214
                            || destRows[i] == 222 || destRows[i] == 226) {
                     // Rows 212-226 PAX/EUR section must not be sign-flipped
                     numVal /= 1000.0;
+                    numVal = std::round(numVal * 100000.0) / 100000.0;
                 } else {
                     numVal /= -1000.0;
+                    numVal = std::round(numVal * 100000.0) / 100000.0;
                 }
             }
             dCell.dataType = "";
