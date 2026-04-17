@@ -134,6 +134,10 @@
     \normalsize\bfseries\color{AccentBlue}%
 }{}{0em}{}
 
+% Ensure subsections and subsubsections appear in TOC
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{3}
+
 % =============================================================
 %  CUSTOM BOXES
 % =============================================================
@@ -283,10 +287,24 @@
 
 \newpage
 \thispagestyle{fancy}
+
+% Table of Contents with expanded depth
 {\hypersetup{linkcolor=DarkText}
-\setcounter{tocdepth}{1}
-{\small\tableofcontents}}
-\newpage
+\setcounter{tocdepth}{3}  % Show sections, subsections, and subsubsections
+
+% Adjust TOC spacing to prevent overflow
+\makeatletter
+\renewcommand{\@pnumwidth}{2em}  % Width for page numbers
+\renewcommand{\@tocrmarg}{3em}   % Right margin
+\makeatother
+
+% Make TOC font 7pt to fit on one page
+{\fontsize{7}{9}\selectfont
+\tableofcontents
+}
+}
+
+\clearpage  % Ensure TOC ends on its own page(s) before content begins
 
 % =============================================================
 \section{Overview}
@@ -381,6 +399,29 @@ RAM              & 8 GB minimum, 16 GB recommended for 12+ months \\
 \label{fig:mainui}
 \end{figure}
 
+\subsubsection{How to Use the Main Window}
+
+\begin{stepbox}
+\textbf{Step 1: Understanding the Layout}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item The \textbf{left sidebar} shows ``Active Mappings'' --- this is where mapping cards appear after loading files.
+\item The \textbf{center panel} displays year cards (2025, 2026, etc.) with month checkboxes.
+\item The \textbf{header toolbar} contains Execute All, Pause, Stop, Reset, and Log buttons.
+\item The \textbf{bottom status bar} shows the current operation status and file counts.
+\end{enumerate}
+
+\textbf{Step 2: First-Time Setup}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item Verify the application is pointing to the correct network drive (default: L: drive).
+\item Ensure all JSON mapping files exist in the \texttt{JSON/} subfolder next to the executable.
+\item Check that cost-control files follow the naming convention: \texttt{Cost Control ZAG MM\_YYYY\_working.xlsm}.
+\end{enumerate}
+\end{stepbox}
+
+\begin{warningbox}[Before You Start]
+\textbf{Always close all Excel files} before loading them in the application. Open files will cause ``ZIP read error'' or ``file is locked'' messages and prevent transfers from running.
+\end{warningbox}
+
 \subsection{Header Bar}
 
 The header bar contains global controls:
@@ -406,6 +447,45 @@ Log            & Toggles the status log panel (hidden by default) \\
 \label{fig:toolbar}
 \end{figure}
 
+\subsubsection{Understanding the Toolbar Buttons}
+
+\begin{stepbox}
+\textbf{Execute All (Green Button)}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{When to use}: After loading files and checking the mapping cards you want to transfer.
+\item \textbf{What it does}: Processes all checked mapping cards in sequence, writing data from source files to destination files.
+\item \textbf{Watch out}: Maximum 5 months can be selected at once. More than 5 will show a warning.
+\end{itemize}
+
+\textbf{Pause (White Button)}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{When to use}: During a transfer, if you need to temporarily halt execution.
+\item \textbf{What it does}: Pauses after the current cell write completes. Click again to resume.
+\item \textbf{Watch out}: The current mapping will finish before pausing --- it doesn't stop mid-cell.
+\end{itemize}
+
+\textbf{Stop (Red Button)}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{When to use}: To cancel a transfer operation immediately.
+\item \textbf{What it does}: Terminates execution. The current sheet finishes saving first to prevent corruption.
+\item \textbf{Watch out}: Partial data may be written. Check the log to see which mappings completed.
+\end{itemize}
+
+\textbf{Reset (Dark Button)}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{When to use}: To clear all loaded files and start fresh.
+\item \textbf{What it does}: Unloads all workbooks, clears mapping cards, and resets period selections.
+\item \textbf{Watch out}: This does NOT delete files --- it only clears the application's memory.
+\end{itemize}
+
+\textbf{Log (Dark Button)}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{When to use}: To view detailed transfer logs and debug information.
+\item \textbf{What it does}: Shows/hides the log panel at the bottom of the window.
+\item \textbf{Watch out}: The log panel is hidden by default. Click to show it when troubleshooting.
+\end{itemize}
+\end{stepbox}
+
 \subsection{Year Cards}
 
 Each year card shows month checkboxes and quick-select controls:
@@ -423,6 +503,86 @@ Each year card shows month checkboxes and quick-select controls:
 \caption{Year card expanded showing month checkboxes. July, August and September are selected (blue). Q1--Q4, All, and None quick-select buttons are visible on the right.}
 \label{fig:yearcard}
 \end{figure}
+
+\subsubsection{How to Select Months}
+
+\begin{stepbox}
+\textbf{Step 1: Expand a Year Card}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item Click the \textbf{year checkbox} (e.g., ``2025'') to expand the card.
+\item The card opens to show 12 month checkboxes (January through December).
+\item Quick-select buttons appear on the right: Q1, Q2, Q3, Q4, All, None.
+\end{enumerate}
+
+\textbf{Step 2: Select Individual Months}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item \textbf{Click individual month checkboxes} to select specific months (e.g., July, August, September).
+\item Selected months turn \textbf{blue} with a checkmark.
+\item You can select months from multiple years by expanding multiple year cards.
+\end{enumerate}
+
+\textbf{Step 3: Use Quick-Select Buttons}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{Q1}: Selects January, February, March
+\item \textbf{Q2}: Selects April, May, June
+\item \textbf{Q3}: Selects July, August, September
+\item \textbf{Q4}: Selects October, November, December
+\item \textbf{All}: Selects all 12 months
+\item \textbf{None}: Deselects all months in this year
+\end{itemize}
+
+\textbf{Step 4: Load the Selected Periods}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item After selecting months, click \textbf{LOAD Selected Periods} at the bottom.
+\item Wait for the green ``Loaded'' toast notification.
+\item Mapping cards appear in the left sidebar for each loaded month.
+\end{enumerate}
+\end{stepbox}
+
+\begin{warningbox}[Selection Limit]
+\textbf{Maximum 5 months} can be selected for Execute All. Selecting more will show a warning: ``You have selected X months. Maximum is 5 at a time.'' Process months in batches to avoid memory overflow.
+\end{warningbox}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.82\linewidth]{../../Pictures/Figure5.png}
+\caption{\textbf{Monthly Transfer} tab with multiple months selected across different years. The year cards for 2025 and 2026 are both expanded, showing individual month checkboxes. The \textbf{Load Selected Periods} button at the bottom becomes active once at least one month is checked. The status bar indicates how many periods are currently selected.}
+\label{fig:multimonth}
+\end{figure}
+
+\subsubsection{Working with Multiple Years}
+
+\begin{stepbox}
+\textbf{When to Select Multiple Years}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item When you need to process December 2025 and January 2026 together.
+\item When backfilling data across a year boundary.
+\item When comparing or consolidating data from different fiscal years.
+\end{itemize}
+
+\textbf{How to Select Across Years}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item Expand the first year card (e.g., 2025) and select months (e.g., November, December).
+\item Expand the second year card (e.g., 2026) and select months (e.g., January, February).
+\item The status bar shows total selected: ``4 periods selected''.
+\item Click \textbf{LOAD Selected Periods} to load all months from both years.
+\end{enumerate}
+
+\textbf{What Happens During Load}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item The application scans for cost-control files in each month's folder.
+\item For each found file, it loads the workbook structure (sheets, columns, rows).
+\item Mapping cards appear in the left sidebar --- one set per month.
+\item A green toast notification confirms: ``Loaded 4 period(s)''.
+\end{enumerate}
+\end{stepbox}
+
+\begin{infobox}[File Naming Across Years]
+Ensure cost-control files follow the naming convention for both years:\\
+\texttt{Cost Control ZAG 12\_2025\_working.xlsm}\\
+\texttt{Cost Control ZAG 01\_2026\_working.xlsm}\\
+The application automatically adjusts paths based on the year and month.
+\end{infobox}
 
 \begin{infobox}[Period Limit]
 Maximum \textbf{5 months} can be selected at a time for Execute All. Selecting more shows a warning and prevents execution to avoid memory overflow.
@@ -496,6 +656,102 @@ Import       & Import rowMap from JSON file \\
 \label{fig:mappingcard}
 \end{figure}
 
+\subsubsection{Understanding Mapping Cards}
+
+\begin{stepbox}
+\textbf{What is a Mapping Card?}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item Each card represents one transfer rule: source → destination.
+\item \textbf{Source}: Which Excel file, sheet, and column to read from.
+\item \textbf{Destination}: Which sheet and column to write to.
+\item \textbf{Row Map}: Defines which source rows map to which destination rows.
+\end{itemize}
+
+\textbf{Reading a Mapping Card}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item \textbf{Top line}: Source file type (e.g., ``SAP Report'', ``2025 FTE'', ``REFI CM'').
+\item \textbf{Second line}: Source sheet name and column (e.g., ``Report → C'').
+\item \textbf{Third line}: Destination sheet and column (e.g., ``MZLZ Consolidated → BD'').
+\item \textbf{Checkbox}: Check to include this mapping in the next Execute All run.
+\item \textbf{Amber badge}: Shows ``Ignore'' if this mapping is temporarily disabled.
+\end{enumerate}
+
+\textbf{Card Actions}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{Edit Rows}: Modify which source rows map to which destination rows.
+\item \textbf{Export}: Save the current rowMap to a JSON file for backup or sharing.
+\item \textbf{Import}: Load a rowMap from a JSON file to replace the current mapping.
+\item \textbf{Ignore badge}: Click to toggle this mapping in/out of transfers (turns amber when ignored).
+\end{itemize}
+
+\textbf{Copy Full Sheet Option}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item Appears below cards that support full-sheet copying (e.g., external source files).
+\item \textbf{Check ``Copy full sheet''} to copy the entire source sheet instead of individual cells.
+\item \textbf{Target sheet name}: Specify the name for the copied sheet in the destination file.
+\item \textbf{Insert after sheet name}: Position the new sheet after an existing sheet.
+\end{itemize}
+\end{stepbox}
+
+\begin{infobox}[Hidden for Same-File Sources]
+The ``Copy full sheet'' option is \textbf{automatically hidden} for REFI, Budget, and prev-year mappings because these read from the same cost-control file. Copying a sheet to itself is not applicable.
+\end{infobox}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.82\linewidth]{../../Pictures/Figure8.png}
+\caption{\textbf{Mapping card detail view} showing the expanded controls for a single mapping entry. The card displays the source file type (SAP Report), source sheet name, source column (C), destination sheet (MZLZ Consolidated), and destination column (BD). Below the main mapping information are action buttons: \textbf{Edit Rows} (modify row mappings), \textbf{Export} (save rowMap to JSON), \textbf{Import} (load rowMap from JSON), and the amber \textbf{Ignore} badge (toggle this mapping in/out of transfers). The checkbox at the top left controls whether this mapping is included in the next Execute All run.}
+\label{fig:mappingdetail}
+\end{figure}
+
+\subsubsection{Working with Mapping Card Controls}
+
+\begin{stepbox}
+\textbf{Checkbox (Top Left)}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item \textbf{Checked (blue)}: This mapping will be included in the next Execute All run.
+\item \textbf{Unchecked (gray)}: This mapping will be skipped during Execute All.
+\item \textbf{Use case}: Uncheck mappings you don't need to run (e.g., skip SAP if only updating PAX data).
+\end{enumerate}
+
+\textbf{Edit Rows Button}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item Click \textbf{Edit Rows} to open the row mapping editor.
+\item The dialog shows a table: left column = source rows, right column = destination rows.
+\item \textbf{Add new mappings}: Click ``+ Add Row'' and enter source/destination row numbers.
+\item \textbf{Delete mappings}: Select a row and click ``Delete''.
+\item \textbf{Bulk operations}: Use ``Import'' to load from JSON or ``Export'' to save.
+\item Click \textbf{OK} to apply changes.
+\end{enumerate}
+
+\textbf{Export Button}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item Click \textbf{Export} to save the current rowMap to a JSON file.
+\item Choose a location and filename (e.g., \texttt{my\_custom\_mapping.json}).
+\item \textbf{Use case}: Backup your custom mappings or share them with colleagues.
+\end{enumerate}
+
+\textbf{Import Button}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item Click \textbf{Import} to load a rowMap from a JSON file.
+\item Select a previously exported JSON file.
+\item The current rowMap is replaced with the imported one.
+\item \textbf{Watch out}: This overwrites the existing mapping --- export first if you want to keep it.
+\end{enumerate}
+
+\textbf{Ignore Badge (Amber)}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item Click the \textbf{Ignore} badge to toggle this mapping in/out of transfers.
+\item When ignored, the badge turns amber and the mapping is skipped during Execute All.
+\item Click again to re-enable the mapping (badge disappears).
+\item \textbf{Difference from unchecking}: Ignore is more visible and temporary --- useful for quick testing.
+\end{enumerate}
+\end{stepbox}
+
+\begin{warningbox}[Import Overwrites Data]
+Importing a rowMap \textbf{replaces} the current mapping completely. Always export your current mapping first if you want to preserve it.
+\end{warningbox}
+
 \begin{infobox}[Copy Full Sheet]
 The ``Copy full sheet'' checkbox is \textbf{automatically hidden} for REFI, Budget, and prev-year mappings. These mappings read from the same cost-control file --- copying a sheet to itself is not applicable.
 \end{infobox}
@@ -505,6 +761,13 @@ The ``Copy full sheet'' checkbox is \textbf{automatically hidden} for REFI, Budg
 \includegraphics[width=0.88\linewidth]{../../Pictures/Figure12.png}
 \caption{\textbf{Active Mappings} sidebar showing a mapping card for April 2025 with the \textbf{Ignore} badge highlighted (amber). The card maps the \textit{2025 FTE} source sheet (column G) to \textit{MZLZ Consolidated} (column BD). Clicking the \textbf{Ignore} badge on any card toggles it in or out of the next transfer run without removing the mapping. The \textbf{Copy full sheet} checkbox and sheet name fields below the card allow full-sheet copy mode for supported mapping types.}
 \label{fig:copyfullsheet}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.88\linewidth]{../../Pictures/Figure13.png}
+\caption{\textbf{Edit Rows dialog} for modifying source and destination row mappings. The dialog shows a two-column table where each row defines a mapping pair: the left column lists source row numbers (from the source Excel file), and the right column lists corresponding destination row numbers (in the destination file). Users can add new row pairs using the \textbf{+ Add Row} button, delete existing pairs with the \textbf{Delete} button, or bulk-import/export mappings using the \textbf{Import} and \textbf{Export} buttons. Changes are applied immediately when clicking \textbf{OK}.}
+\label{fig:editrows}
 \end{figure}
 
 \subsection{Ignore Rows Dialog}
@@ -529,25 +792,129 @@ Click \textbf{$\oslash$ Ignore} on any mapping card to open the Ignore Rows dial
 \label{fig:ignorerows}
 \end{figure}
 
+\subsubsection{Using the Ignore Rows Dialog}
+
+\begin{stepbox}
+\textbf{Step 1: Open the Dialog}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item On any mapping card, click the \textbf{$\oslash$ Ignore} button.
+\item The Ignore Rows dialog opens, showing all rowMap entries for this mapping.
+\item Each row displays: Dest Row, Dest Column, Src Row(s), and Current Value.
+\end{enumerate}
+
+\textbf{Step 2: Review the Row List}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{Dest Row}: The destination row number in the target Excel file.
+\item \textbf{Dest Column}: The destination column (e.g., BD, CP, DJ).
+\item \textbf{Src Row(s)}: The source row(s) that map to this destination (can be multiple).
+\item \textbf{Current Value}: The current value in the destination cell (if file is loaded).
+\item \textbf{Skip checkbox}: Check to exclude this row from the next transfer.
+\end{itemize}
+
+\textbf{Step 3: Select Rows to Ignore}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item \textbf{Manual selection}: Check the ``Skip'' checkbox next to any row you want to exclude.
+\item \textbf{Filter}: Type in the filter box to search by row number or cell value (e.g., ``115'' or ``1000'').
+\item \textbf{Bulk selection}: Click \textbf{Ignore All} to check all rows, or \textbf{Ignore None} to uncheck all.
+\item The status line updates: ``X rows ignored out of Y''.
+\end{enumerate}
+
+\textbf{Step 4: Apply Changes}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item Click \textbf{Apply} to save your selections.
+\item The dialog closes and returns to the main window.
+\item Ignored rows will be skipped during the next Execute All run.
+\item Click \textbf{Cancel} to discard changes and close the dialog.
+\end{enumerate}
+
+\textbf{When to Use Ignore Rows}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{Testing}: Ignore most rows to test a transfer with just a few rows.
+\item \textbf{Selective updates}: Skip rows that shouldn't be overwritten (e.g., manual adjustments).
+\item \textbf{Troubleshooting}: Isolate problematic rows by ignoring all others.
+\item \textbf{Partial transfers}: Update only specific sections of a sheet.
+\end{itemize}
+\end{stepbox}
+
 \begin{warningbox}[Session Only]
-Ignored rows are stored in memory for the current session. They are not persisted to JSON files and will reset when you restart the application.
+Ignored rows are stored in memory for the current session only. They are \textbf{not saved} to JSON files and will reset when you restart the application. If you need permanent exclusions, modify the JSON mapping files directly.
 \end{warningbox}
+
+\begin{infobox}[Filter Tips]
+The filter box searches both row numbers and cell values:
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item Type ``115'' to find all rows with 115 in the row number.
+\item Type ``1000'' to find all rows with values containing 1000.
+\item Type ``BD'' to find all rows in column BD.
+\end{itemize}
+\end{infobox}
 
 % =============================================================
 \section{Execute All Transfers}
 % =============================================================
 
+\subsubsection{Complete Workflow: From Loading to Execution}
+
 \begin{stepbox}
-\begin{enumerate}[leftmargin=*, itemsep=6pt]
-\item Ensure files are loaded (green status).
-\item Check the mapping cards you want to execute.
-\item Click \textbf{Execute All}.
-\item Monitor progress. On completion, a summary shows total cells transferred.
+\textbf{Step 1: Load Files}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item Expand year cards and select months (maximum 5 at a time).
+\item Click \textbf{LOAD Selected Periods}.
+\item Wait for the green toast: ``Loaded X period(s)''.
+\item Verify mapping cards appear in the left sidebar.
+\end{enumerate}
+
+\textbf{Step 2: Review Mapping Cards}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item Check that all expected mapping cards are present (typically 9 per month: SAP, REFI, Budget, Traffic, PAX, Staff, SAP YTD, PAX Transfer, Prev Year).
+\item \textbf{Uncheck} any mappings you don't want to run.
+\item Click \textbf{$\oslash$ Ignore} on cards where you want to skip specific rows.
+\item Verify source/destination columns are correct.
+\end{enumerate}
+
+\textbf{Step 3: Execute the Transfer}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item Ensure all destination files are \textbf{closed in Excel}.
+\item Click the green \textbf{Execute All} button in the header toolbar.
+\item A progress dialog appears showing the current operation.
+\item Monitor the progress bar and status messages.
+\end{enumerate}
+
+\textbf{Step 4: Monitor Progress}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item The progress dialog shows: ``Processing [Source] → [Destination]''.
+\item The progress bar updates as each mapping completes.
+\item Click \textbf{Log} in the header to view detailed execution logs.
+\item Watch for any red error messages in the log panel.
+\end{enumerate}
+
+\textbf{Step 5: Review Results}
+\begin{enumerate}[leftmargin=*, itemsep=4pt]
+\item When complete, a summary dialog shows: total mappings, successful transfers, failed transfers, and cells transferred.
+\item A green toast notification appears: ``Transfer complete --- X cells transferred''.
+\item Check the log panel for any warnings or errors.
+\item Open the destination Excel files to verify the data was written correctly.
 \end{enumerate}
 \end{stepbox}
 
-\begin{warningbox}[Maximum 5 Months]
-Selecting more than 5 months simultaneously will show a warning and block execution. Process months in batches of up to 5 to avoid memory overflow.
+\begin{warningbox}[Common Errors]
+\textbf{``ZIP read error'' or ``not a zip file''}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{Cause}: File is open in Excel, corrupt, or not a valid XLSX/XLSM file.
+\item \textbf{Fix}: Close the file in Excel. If still failing, replace with a fresh copy from backup.
+\end{itemize}
+
+\textbf{``0 cells transferred''}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{Cause}: Source file missing, sheet not found, or all rows are ignored.
+\item \textbf{Fix}: Check the log for specific error messages. Verify file paths and sheet names.
+\end{itemize}
+
+\textbf{``File is locked''}
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+\item \textbf{Cause}: Destination file is open in Excel or locked by another process.
+\item \textbf{Fix}: Close the file in Excel. Check Task Manager for orphaned Excel processes.
+\end{itemize}
 \end{warningbox}
 
 \subsection{Pause and Stop}
@@ -772,6 +1139,8 @@ Mappings execute in this fixed priority order:
 \end{tabularx}
 \end{center}
 
+\newpage  % Force Troubleshooting to start on new page to prevent TOC overflow
+
 % =============================================================
 \section{Troubleshooting}
 % =============================================================
@@ -803,6 +1172,8 @@ Ensure the destination path shown in the scan table ends with \texttt{/Month/}. 
 
 \subsection{Parallel Transfer Not Visible in UI}
 The Parallel Transfer backend is implemented but the UI tab is under development. The backend can be connected by wiring \texttt{ParallelTransferController} signals in \texttt{mainwindow.cpp}.
+
+\newpage  % Page break before Appendix
 
 % =============================================================
 \section{Appendix}
@@ -916,6 +1287,41 @@ The \textbf{Hybrid Transfer} tab lets you assign individual months to either \te
 \includegraphics[width=0.92\linewidth]{../../Pictures/Figure16.png}
 \caption{The \textbf{Hybrid Transfer} tab with periods assigned and mapping cards loaded for February 2026. The left \textit{Row Mappings} sidebar shows all mapping cards for the loaded month (SAP Report, REFI CM, Budget 2025 --- each with source/destination sheet and column, and an amber \textbf{Ignore} badge where applicable). The \textit{Transfer Type} dropdown on the right shows both options --- \textit{Execute All} and \textit{Execute RT} --- open for selection. The \textit{Assigned Periods} table at the bottom lists three entries: February 2026 (\textit{Execute All}, Pending), September 2026 (\textit{Execute RT}, Pending), and October 2026 (\textit{Execute RT}, Pending). Click \textbf{Execute All} in the header toolbar to process all assigned periods.}
 \label{fig:hybrid-loaded}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{../../Pictures/Figure17.png}
+\caption{\textbf{Transfer progress dialog} showing real-time status during an Execute All operation. The dialog displays the current operation (``Transferring data...''), a progress bar indicating completion percentage, and the current mapping being processed (e.g., ``Processing SAP Report → MZLZ Consolidated''). The \textbf{Cancel} button allows users to abort the transfer mid-execution. Status messages update continuously as each mapping card completes.}
+\label{fig:progress}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{../../Pictures/Figure18.png}
+\caption{\textbf{Log panel} (toggled visible via the \textbf{Log} button in the header) showing detailed transfer execution logs. Each log entry includes a timestamp, severity level (INFO, WARNING, ERROR), and a descriptive message. The log captures all file loading operations, mapping executions, cell transfers, and any errors encountered. Users can scroll through the log history to troubleshoot issues or verify successful transfers. The log panel can be hidden at any time by clicking the \textbf{Log} button again.}
+\label{fig:logpanel}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{../../Pictures/Figure19.png}
+\caption{\textbf{Create Month File confirmation dialog} showing the source template file and destination paths for new month files. The dialog lists each month file that will be created (e.g., ``May 2025'', ``June 2025'', ``July 2025'') along with its full destination path. The source template (e.g., ``Cost Control ZAG 04\_2025\_working.xlsm'') is displayed at the top. Click \textbf{Yes} to proceed with file creation, or \textbf{No} to cancel. Already-existing files are automatically skipped to prevent accidental overwrites.}
+\label{fig:createconfirm}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{../../Pictures/Figure20.png}
+\caption{\textbf{File validation error dialog} displayed when the application detects a corrupt or invalid Excel file. The dialog shows the file path and error details (e.g., ``not a zip file'', ``missing workbook.xml'', ``file is locked''). Common causes include: file open in Excel, corrupted ZIP structure, or incomplete download. The dialog offers options to \textbf{Replace} the file (browse for a valid replacement), \textbf{Skip} the file (continue without it), or \textbf{Cancel} the entire operation.}
+\label{fig:fileerror}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{../../Pictures/Figure21.png}
+\caption{\textbf{Transfer completion summary} showing the final results after an Execute All or Fill All Months operation completes. The summary displays: total mappings processed, successful transfers, failed transfers, total cells transferred, and execution time. Any warnings or errors are listed below with clickable links to jump to the relevant log entries. The \textbf{Close} button dismisses the dialog. A green toast notification also appears at the bottom-center of the application window confirming successful completion.}
+\label{fig:summary}
 \end{figure}
 
 \vspace{1cm}

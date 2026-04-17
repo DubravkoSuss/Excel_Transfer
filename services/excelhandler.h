@@ -93,6 +93,7 @@ public:
     QVariant getCellValue(const QString& key, const QString& sheetName, int row, int col);
     bool setCellValue(const QString& key, const QString& sheetName, int row, int col, const QVariant& value);
     bool setCellFormula(const QString& key, const QString& sheetName, int row, int col, const QString& formula);
+    QString getCellFormula(const QString& key, const QString& sheetName, int row, int col);
     
     bool copyData(const QString& srcKey, const QString& srcSheet, const QString& srcCol, 
                   const QVector<int>& srcRows, const QString& destKey, const QString& destSheet,

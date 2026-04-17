@@ -250,6 +250,51 @@ public:
                 emit rowDone(tm.rowIndex, success, rowMessage);
             }
 
+            // --- Phase 3: Run Execute All cumulative pass ONCE per month/year ---
+            // Computes IP through (targetMonth - 1). Target month's column is untouched.
+            {
+                // Only include rows from mappings whose destColumn is a base column.
+                // budget_refi writes to non-base columns (D/E/F, T/U/V, EW/EX/EY, etc.)
+                // and must NOT feed into cumulative IP-IZ computation.
+                static const QSet<QString> baseColSet = {
+                    "G", "W", "AM", "BD", "BW", "CP", "DJ", "EF", "FB", "FY", "GX", "HW"
+                };
+                struct CumKey { QString month; int year; QString destKey;
+                    bool operator<(const CumKey& o) const {
+                        if (year != o.year) return year < o.year;
+                        return month < o.month;
+                    }
+                };
+                QMap<CumKey, QSet<int>> cumRows;
+                for (const TransferMapping& tm : m_mappings) {
+                    const QString month = tm.month.isEmpty() ? tm.entry.month : tm.month;
+                    if (month.trimmed().isEmpty() || tm.year <= 0) continue;
+                    if (tm.entry.destSheet != "MZLZ Consolidated") continue;
+                    if (!baseColSet.contains(tm.entry.destColumn.toUpper())) continue;
+                    const QString destKey = QString("%1_%2_cost_control").arg(month).arg(tm.year);
+                    CumKey key{month, tm.year, destKey};
+                    QSet<int>& rows = cumRows[key];
+                    if (!tm.entry.rowMap.isEmpty()) {
+                        for (auto it = tm.entry.rowMap.constBegin(); it != tm.entry.rowMap.constEnd(); ++it)
+                            rows.insert(it.key());
+                    } else {
+                        for (int r : tm.entry.destRows) rows.insert(r);
+                    }
+                }
+
+                for (auto it = cumRows.constBegin(); it != cumRows.constEnd(); ++it) {
+                    if (isStopRequested()) break;
+                    qDebug() << "[WORKER_CUM] Running Execute All cumulative for"
+                             << it.key().month << it.key().year;
+                    m_transferService->runCumulativePassExecuteAll(
+                        it.value(),
+                        "MZLZ Consolidated",
+                        it.key().year,
+                        it.key().destKey,
+                        it.key().month);
+                }
+            }
+
             // Save all destination workbooks once at the end via OpenXML.
             qDebug() << "=== ALL TRANSFERS DONE, STARTING SAVES ===";
             qDebug() << "TransferWorker: starting save phase," << destMap.size() << "workbooks";

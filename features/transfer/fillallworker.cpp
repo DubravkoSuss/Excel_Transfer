@@ -182,7 +182,9 @@ void FillAllWorker::run()
                 TransferService::Result r = m_transfer->transferEntry(
                     mapping, year, destKey,
                     m_scan.destFilePath,
-                    m_scan.destFolder);
+                    m_scan.destFolder,
+                    true // skipCumulative (Pass 2 runs later)
+                );
 
                 if (r.error.isEmpty()) {
                     result.successCount++;
@@ -289,7 +291,9 @@ void FillAllWorker::run()
                 TransferService::Result r = m_transfer->transferEntry(
                     mapping, year, destKey,
                     m_scan.destFilePath,
-                    m_scan.destFolder);
+                    m_scan.destFolder,
+                    true // skipCumulative (Pass 2 runs later)
+                );
 
                 if (r.error.isEmpty()) {
                     result.successCount++;
@@ -322,6 +326,50 @@ void FillAllWorker::run()
             m_handler->unloadWorkbook(targetStaffKey);
             qDebug() << "[FILL_ALL] Unloaded" << targetStaffKey;
         }
+    }
+
+    // =========================================================================
+    // PHASE 4.5: Calculate Cumulative Columns (Pass 2)
+    // Run after all base data is written but before saving.
+    // Collect ALL destination rows from ALL mapping types that target MZLZ Consolidated.
+    // =========================================================================
+    emit progress(totalProgressSteps - 1, totalProgressSteps, "Computing cumulative columns (Pass 2)...");
+    
+    QSet<int> allMzlzRows;
+    QString mzlzSheetName = "MZLZ Consolidated";
+    
+    // Only include rows from mappings whose destColumn is a base column
+    // (G, W, AM, BD, BW, CP, DJ, EF, FB, FY, GX, HW).
+    // budget_refi writes to non-base columns (D/E/F, T/U/V, etc.) and must NOT
+    // participate in cumulative IP-IZ computation, otherwise stale formula values
+    // from the base columns create phantom cumulative entries.
+    static const QSet<QString> baseColSet = {
+        "G", "W", "AM", "BD", "BW", "CP", "DJ", "EF", "FB", "FY", "GX", "HW"
+    };
+    const QStringList allTypes = {"sap", "sap_ytd", "budget_refi", "traffic_mott", "pax_transfer", "staff"};
+    for (const QString& type : allTypes) {
+        QVector<MappingEntry> mappings = getMappingsForType(targetMonthName, year, type);
+        for (const MappingEntry& me : mappings) {
+            if (me.destSheet != "MZLZ Consolidated") continue;
+            // Skip mappings that don't write to base columns
+            if (!baseColSet.contains(me.destColumn.toUpper())) continue;
+            if (!me.rowMap.isEmpty()) {
+                for (auto it = me.rowMap.constBegin(); it != me.rowMap.constEnd(); ++it)
+                    allMzlzRows.insert(it.key());
+            } else {
+                for (int r : me.destRows) allMzlzRows.insert(r);
+            }
+            // Include traffic PAX rows too (rows 5-11 etc.)
+            for (auto it = me.trafficPaxRowMap.constBegin(); it != me.trafficPaxRowMap.constEnd(); ++it)
+                allMzlzRows.insert(it.key());
+        }
+    }
+    
+    if (!allMzlzRows.isEmpty()) {
+        qDebug() << "[FILL_ALL] Cumulative pass: collected" << allMzlzRows.size() << "MZLZ rows from all mapping types";
+        m_transfer->runCumulativePassAllMonths(allMzlzRows, mzlzSheetName, year, destKey, targetMonthName);
+    } else {
+        qWarning() << "[FILL_ALL] Cumulative pass skipped: no MZLZ rows found across any mapping type.";
     }
 
     // =========================================================================

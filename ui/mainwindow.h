@@ -87,6 +87,8 @@ class HybridTransferTab;
 class HybridWorker;
 class ComparatorTab;
 class CustomTabWidget;
+class ExcelSearchTab;
+class YearRolloverTab;
 struct FillAllScanResult;
 
 
@@ -206,6 +208,8 @@ private:
     void createFillAllTab();
     void createHybridTab();
     void createComparatorTab();
+    void createExcelSearchTab();
+    void createYearRolloverTab();
     
 #ifdef Q_OS_WIN
     void customizeWindowsTitleBar();
@@ -293,6 +297,8 @@ private:
     HybridTransferTab* m_hybridTransferTab = nullptr;
     HybridWorker* m_hybridWorker = nullptr;
     ComparatorTab* m_comparatorTab = nullptr;
+    ExcelSearchTab* m_excelSearchTab = nullptr;
+    YearRolloverTab* m_yearRolloverTab = nullptr;
     
     // m_btnGenerate removed — generate is now automatic on year checkbox toggle
     QPushButton* m_btnClear;

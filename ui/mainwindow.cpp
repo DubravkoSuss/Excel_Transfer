@@ -18,6 +18,8 @@
 #include "fillallmonthstab.h"
 #include "hybridtransfertab.h"
 #include "comparatortab.h"
+#include "excelsearchtab.h"
+#include "yearrollovertab.h"
 #include "customtabbar.h"
 #include "../features/transfer/fillallworker.h"
 #include "../features/transfer/hybridworker.h"
@@ -399,6 +401,11 @@ void MainWindow::setupUI()
     // Create Comparator tab
     createComparatorTab();
 
+    // Create Excel Search tab
+    createExcelSearchTab();
+
+    // Create Rollover tab
+    createYearRolloverTab();
 
     m_progressBar = new QProgressBar();
     m_progressBar->setMaximumHeight(6);
@@ -3604,6 +3611,18 @@ void MainWindow::createComparatorTab()
 {
     m_comparatorTab = new ComparatorTab(this);
     m_tabWidget->addTab(m_comparatorTab, "Comparator");
+}
+
+void MainWindow::createExcelSearchTab()
+{
+    m_excelSearchTab = new ExcelSearchTab(this);
+    m_tabWidget->addTab(m_excelSearchTab, "Excel Search");
+}
+
+void MainWindow::createYearRolloverTab()
+{
+    m_yearRolloverTab = new YearRolloverTab(this);
+    m_tabWidget->addTab(m_yearRolloverTab, "Prep New Year");
 }
 
 void MainWindow::createFillAllTab()

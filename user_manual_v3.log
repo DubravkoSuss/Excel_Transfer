@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.141592653-2.6-0.999998 (MiKTeX 26.2) (preloaded format=xelatex 2026.3.11)  15 APR 2026 09:27
+This is XeTeX, Version 3.141592653-2.6-0.999998 (MiKTeX 26.2) (preloaded format=xelatex 2026.3.11)  17 APR 2026 12:48
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1147,26 +1147,26 @@ Package hyperref Info: Option `bookmarksnumbered' set `true' on input line 86.
  (user_manual_v3.aux)
 \openout1 = `user_manual_v3.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 216.
-LaTeX Font Info:    ... okay on input line 216.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 216.
-LaTeX Font Info:    ... okay on input line 216.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 216.
-LaTeX Font Info:    ... okay on input line 216.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 216.
-LaTeX Font Info:    ... okay on input line 216.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 216.
-LaTeX Font Info:    ... okay on input line 216.
-LaTeX Font Info:    Checking defaults for TU/lmr/m/n on input line 216.
-LaTeX Font Info:    ... okay on input line 216.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 216.
-LaTeX Font Info:    ... okay on input line 216.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 216.
-LaTeX Font Info:    ... okay on input line 216.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 216.
-LaTeX Font Info:    ... okay on input line 216.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 216.
-LaTeX Font Info:    ... okay on input line 216.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 220.
+LaTeX Font Info:    ... okay on input line 220.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 220.
+LaTeX Font Info:    ... okay on input line 220.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 220.
+LaTeX Font Info:    ... okay on input line 220.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 220.
+LaTeX Font Info:    ... okay on input line 220.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 220.
+LaTeX Font Info:    ... okay on input line 220.
+LaTeX Font Info:    Checking defaults for TU/lmr/m/n on input line 220.
+LaTeX Font Info:    ... okay on input line 220.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 220.
+LaTeX Font Info:    ... okay on input line 220.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 220.
+LaTeX Font Info:    ... okay on input line 220.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 220.
+LaTeX Font Info:    ... okay on input line 220.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 220.
+LaTeX Font Info:    ... okay on input line 220.
 
 *geometry* driver: auto-detecting
 *geometry* detected driver: xetex
@@ -1202,15 +1202,15 @@ LaTeX Font Info:    ... okay on input line 216.
 * \@reversemarginfalse
 * (1in=72.27pt=25.4mm, 1cm=28.453pt)
 
-LaTeX Info: Redefining \microtypecontext on input line 216.
-Package microtype Info: Applying patch `item' on input line 216.
-Package microtype Info: Applying patch `toc' on input line 216.
-Package microtype Info: Applying patch `eqnum' on input line 216.
+LaTeX Info: Redefining \microtypecontext on input line 220.
+Package microtype Info: Applying patch `item' on input line 220.
+Package microtype Info: Applying patch `toc' on input line 220.
+Package microtype Info: Applying patch `eqnum' on input line 220.
 
-Package microtype Warning: Unable to apply patch `footnote' on input line 216.
+Package microtype Warning: Unable to apply patch `footnote' on input line 220.
 
-Package microtype Info: Applying patch `verbatim' on input line 216.
-LaTeX Info: Redefining \microtypesetup on input line 216.
+Package microtype Info: Applying patch `verbatim' on input line 220.
+LaTeX Info: Redefining \microtypesetup on input line 220.
 Package microtype Info: Character protrusion enabled (level 2).
 Package microtype Info: Using default protrusion set `alltext'.
 Package microtype Info: No adjustment of tracking.
@@ -1222,7 +1222,7 @@ File: mt-cmr.cfg 2013/05/19 v2.2 microtype config. file: Computer Modern Roman
 (RS)
 )
 \c@lstlisting=\count370
-Package hyperref Info: Link coloring ON on input line 216.
+Package hyperref Info: Link coloring ON on input line 220.
  (user_manual_v3.out) (user_manual_v3.out)
 \@outlinefile=\write4
 \openout4 = `user_manual_v3.out'.
@@ -1273,42 +1273,42 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 
 
 Package microtype Warning: T1/lmr/m/n/44 is a legacy font.
-(microtype)                Cannot letterspace it on input line 250.
+(microtype)                Cannot letterspace it on input line 254.
 
 
 Package microtype Warning: T1/lmr/bx/n/44 is a legacy font.
-(microtype)                Cannot letterspace it on input line 250.
+(microtype)                Cannot letterspace it on input line 254.
 
-LaTeX Font Info:    Calculating math sizes for size <44> on input line 250.
+LaTeX Font Info:    Calculating math sizes for size <44> on input line 254.
 LaTeX Font Info:    Trying to load font information for OT1+lmr on input line 2
-50.
+54.
 (C:\Users\dposavac\AppData\Local\Programs\MiKTeX\tex/latex/lm\ot1lmr.fd
 File: ot1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OML+lmm on input line 2
-50.
+54.
 
 (C:\Users\dposavac\AppData\Local\Programs\MiKTeX\tex/latex/lm\omllmm.fd
 File: omllmm.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMS+lmsy on input line 
-250.
+254.
 
 (C:\Users\dposavac\AppData\Local\Programs\MiKTeX\tex/latex/lm\omslmsy.fd
 File: omslmsy.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMX+lmex on input line 
-250.
+254.
 
 (C:\Users\dposavac\AppData\Local\Programs\MiKTeX\tex/latex/lm\omxlmex.fd
 File: omxlmex.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <44> on input line 250.
+(Font)              <44> on input line 254.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <30.79987> on input line 250.
+(Font)              <30.79987> on input line 254.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <22> on input line 250.
+(Font)              <22> on input line 254.
 Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/lmr/m/sc/13'.
 (microtype)             Ignoring protrusion settings for this character.
@@ -1316,23 +1316,23 @@ Package microtype Info: Character `029' is missing
 (microtype)             in font `T1/lmr/m/sc/10'.
 (microtype)             Ignoring protrusion settings for this character.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <8> on input line 266.
+(Font)              <8> on input line 270.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <6> on input line 266.
+(Font)              <6> on input line 270.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <5> on input line 266.
+(Font)              <5> on input line 270.
 
 [1
 
 ]
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <14.4> on input line 288.
+(Font)              <14.4> on input line 303.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10> on input line 288.
+(Font)              <10> on input line 303.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <7> on input line 288.
+(Font)              <7> on input line 303.
 
-Overfull \hbox (63.28186pt too wide) in paragraph at lines 288--288
+Overfull \hbox (63.28186pt too wide) in paragraph at lines 303--303
 |[][][][][][]\T1/lmr/bx/n/14.4 Contents| 
  []
 
@@ -1351,40 +1351,40 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 [1
 
 ]
-Overfull \hbox (66.41748pt too wide) in paragraph at lines 292--292
+Overfull \hbox (66.41748pt too wide) in paragraph at lines 310--310
 |[][][][][][][]\T1/lmr/bx/n/14.4 Overview| 
  []
 
 
-Overfull \hbox (50.79771pt too wide) in paragraph at lines 314--314
+Overfull \hbox (50.79771pt too wide) in paragraph at lines 332--332
 |[][][][][][][]\T1/lmr/bx/n/14.4 What's
  []
 
 (C:\Users\dposavac\AppData\Local\Programs\MiKTeX\tex/latex/lm\t1lmtt.fd)
-Underfull \hbox (badness 10000) in paragraph at lines 334--334
+Underfull \hbox (badness 10000) in paragraph at lines 352--352
 []|\T1/lmr/m/n/10.95 New \T1/lmtt/m/n/10.95 ParallelTransferController
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 334--334
+Underfull \hbox (badness 10000) in paragraph at lines 352--352
 \T1/lmr/m/n/10.95 with \T1/lmtt/m/n/10.95 IndividualTransferWorker \T1/lmr/m/n/
 10.95 and
  []
 
 
-Underfull \hbox (badness 3291) in paragraph at lines 334--334
+Underfull \hbox (badness 3291) in paragraph at lines 352--352
 \T1/lmtt/m/n/10.95 RollingTransferWorker\T1/lmr/m/n/10.95 . Each worker owns it
 s
  []
 
 
-Underfull \hbox (badness 1635) in paragraph at lines 334--334
+Underfull \hbox (badness 1635) in paragraph at lines 352--352
 \T1/lmr/m/n/10.95 own \T1/lmtt/m/n/10.95 ExcelHandler \T1/lmr/m/n/10.95 and \T1
 /lmtt/m/n/10.95 TransferService \T1/lmr/m/n/10.95 --- fully
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 334--334
+Underfull \hbox (badness 10000) in paragraph at lines 352--352
 []|\T1/lmr/m/n/10.95 For REFI/Budget/prev-year map-pings (same-file
  []
 
@@ -1395,8 +1395,10 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[2]
-Overfull \hbox (80.37343pt too wide) in paragraph at lines 338--338
+[2
+
+]
+Overfull \hbox (80.37343pt too wide) in paragraph at lines 356--356
 |[][][][][][][]\T1/lmr/bx/n/14.4 Installation| 
  []
 
@@ -1408,12 +1410,22 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
 [3]
-Overfull \hbox (32.52473pt too wide) in paragraph at lines 374--374
+Overfull \hbox (32.52473pt too wide) in paragraph at lines 392--392
 |[][][][][][][]\T1/lmr/bx/n/14.4 User
  []
 
 File: ../../Pictures/Figure1.png Graphic file (type bmp)
 <../../Pictures/Figure1.png>
+
+Package hyperref Warning: Difference (2) between bookmark levels is greater 
+(hyperref)                than one, level fixed on input line 402.
+
+
+Underfull \hbox (badness 1168) in paragraph at lines 417--418
+[]\T1/lmr/m/n/10.95 Check that cost-control files fol-low the nam-ing con-ven-t
+ion: \T1/lmtt/m/n/10.95 Cost Control ZAG
+ []
+
 
 Package fancyhdr Warning: \headheight is too small (14.0pt): 
 (fancyhdr)                Make it at least 23.11996pt, for example:
@@ -1424,19 +1436,59 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 [4]
 File: ../../Pictures/Figure14.png Graphic file (type bmp)
 <../../Pictures/Figure14.png>
+
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[5]
 File: ../../Pictures/Figure4.png Graphic file (type bmp)
 <../../Pictures/Figure4.png>
 
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[6]
+Overfull \vbox (52.62608pt too high) has occurred while \output is active []
+
+
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[7]
+File: ../../Pictures/Figure5.png Graphic file (type bmp)
+<../../Pictures/Figure5.png>
+
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[8]
 File: ../../Pictures/Figure6.png Graphic file (type bmp)
 <../../Pictures/Figure6.png>
+
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 
-Overfull \hbox (56.30809pt too wide) in paragraph at lines 443--443
+Overfull \hbox (56.30809pt too wide) in paragraph at lines 603--603
 |[][][][][][][]\T1/lmr/bx/n/14.4 Loading
  []
 
@@ -1447,8 +1499,8 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[5]
-Overfull \hbox (62.8421pt too wide) in paragraph at lines 462--462
+[9]
+Overfull \hbox (62.8421pt too wide) in paragraph at lines 622--622
 |[][][][][][][]\T1/lmr/bx/n/14.4 Mapping
  []
 
@@ -1459,15 +1511,24 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[6]
+[10]
 File: ../../Pictures/Figure7.png Graphic file (type bmp)
 <../../Pictures/Figure7.png>
 
+Missing character: There is no → in font ec-lmr10!
+Missing character: There is no → in font ec-lmr10!
+Missing character: There is no → in font ec-lmr10!
 
-LaTeX Warning: `h' float specifier changed to `ht'.
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-File: ../../Pictures/Figure12.png Graphic file (type bmp)
-<../../Pictures/Figure12.png>
+[11]
+File: ../../Pictures/Figure8.png Graphic file (type bmp)
+<../../Pictures/Figure8.png>
+
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
@@ -1478,7 +1539,34 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[7]
+[12]
+Overfull \vbox (217.63857pt too high) has occurred while \output is active []
+
+
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[13]
+File: ../../Pictures/Figure12.png Graphic file (type bmp)
+<../../Pictures/Figure12.png>
+File: ../../Pictures/Figure13.png Graphic file (type bmp)
+<../../Pictures/Figure13.png>
+
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[14]
 File: ../../Pictures/Figure9.png Graphic file (type bmp)
 <../../Pictures/Figure9.png>
 
@@ -1492,13 +1580,44 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[8]
-Overfull \hbox (56.4671pt too wide) in paragraph at lines 537--537
+[15]
+Overfull \vbox (136.21294pt too high) has occurred while \output is active []
+
+
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[16]
+Overfull \hbox (56.4671pt too wide) in paragraph at lines 853--853
 |[][][][][][][]\T1/lmr/bx/n/14.4 Execute
  []
 
 
-Overfull \hbox (50.78392pt too wide) in paragraph at lines 561--561
+Package hyperref Warning: Difference (2) between bookmark levels is greater 
+(hyperref)                than one, level fixed on input line 856.
+
+Missing character: There is no → in font ec-lmr10!
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[17]
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[18]
+Overfull \hbox (50.78392pt too wide) in paragraph at lines 928--928
 |[][][][][][][]\T1/lmr/bx/n/14.4 Rolling
  []
 
@@ -1509,16 +1628,8 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[9]
-
-Package fancyhdr Warning: \headheight is too small (14.0pt): 
-(fancyhdr)                Make it at least 23.11996pt, for example:
-(fancyhdr)                \setlength{\headheight}{23.11996pt}.
-(fancyhdr)                You might also make \topmargin smaller:
-(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
-
-[10]
-Overfull \hbox (23.68314pt too wide) in paragraph at lines 586--586
+[19]
+Overfull \hbox (23.68314pt too wide) in paragraph at lines 953--953
 |[][][][][][][]\T1/lmr/bx/n/14.4 Fill
  []
 
@@ -1531,8 +1642,8 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[11]
-Overfull \hbox (53.87508pt too wide) in paragraph at lines 620--620
+[20]
+Overfull \hbox (53.87508pt too wide) in paragraph at lines 987--987
 |[][][][][][][]\T1/lmr/bx/n/14.4 Parallel
  []
 
@@ -1543,13 +1654,13 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[12]
-Overfull \hbox (47.27571pt too wide) in paragraph at lines 660--660
+[21]
+Overfull \hbox (47.27571pt too wide) in paragraph at lines 1027--1027
 |[][][][][][][]\T1/lmr/bx/n/14.4 Create
  []
 
 
-Overfull \hbox (71.95845pt too wide) in paragraph at lines 689--689
+Overfull \hbox (71.95845pt too wide) in paragraph at lines 1056--1056
 |[][][][][][][]\T1/lmr/bx/n/14.4 Individual
  []
 
@@ -1560,7 +1671,7 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[13]
+[22]
 File: ../../Pictures/Figure3.png Graphic file (type bmp)
 <../../Pictures/Figure3.png>
 File: ../../Pictures/Figure10.png Graphic file (type bmp)
@@ -1576,7 +1687,7 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[14]
+[23]
 File: ../../Pictures/Figure11.png Graphic file (type bmp)
 <../../Pictures/Figure11.png>
 
@@ -1584,37 +1695,37 @@ File: ../../Pictures/Figure11.png Graphic file (type bmp)
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 
-Overfull \hbox (34.46635pt too wide) in paragraph at lines 729--729
+Overfull \hbox (34.46635pt too wide) in paragraph at lines 1096--1096
 |[][][][][][][]\T1/lmr/bx/n/14.4 Data
  []
 
 
-Underfull \hbox (badness 3724) in paragraph at lines 746--746
+Underfull \hbox (badness 3724) in paragraph at lines 1113--1113
 \T1/lmr/m/n/10.95 FIC mott YYYY
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 746--746
+Underfull \hbox (badness 10000) in paragraph at lines 1113--1113
 []|\T1/lmr/m/n/10.95 Cost con-trol
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 746--746
+Underfull \hbox (badness 10000) in paragraph at lines 1113--1113
 \T1/lmr/m/n/10.95 TRAF-FIC mott
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 746--746
+Underfull \hbox (badness 10000) in paragraph at lines 1113--1113
 []|\T1/lmr/m/n/10.95 MZLZ Con-sol-i-
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 746--746
+Underfull \hbox (badness 10000) in paragraph at lines 1113--1113
 \T1/lmr/m/n/10.95 dated JG rows
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 746--746
+Underfull \hbox (badness 10000) in paragraph at lines 1113--1113
 []|\T1/lmr/m/n/10.95 MZLZ Con-sol-i-
  []
 
@@ -1625,7 +1736,7 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[15]
+[24]
 
 Package fancyhdr Warning: \headheight is too small (14.0pt): 
 (fancyhdr)                Make it at least 23.11996pt, for example:
@@ -1633,8 +1744,16 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[16]
-Overfull \hbox (114.46541pt too wide) in paragraph at lines 776--776
+[25]
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[26]
+Overfull \hbox (114.46541pt too wide) in paragraph at lines 1145--1145
 |[][][][][][][]\T1/lmr/bx/n/14.4 Troubleshooting| 
  []
 
@@ -1645,18 +1764,18 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[17]
-Overfull \hbox (69.12468pt too wide) in paragraph at lines 808--808
+[27]
+Overfull \hbox (69.12468pt too wide) in paragraph at lines 1179--1179
 |[][][][][][][]\T1/lmr/bx/n/14.4 Appendix| 
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 851--851
+Underfull \hbox (badness 10000) in paragraph at lines 1222--1222
 []|\T1/lmr/m/n/10.95 REFI/Budget/PrevYear
  []
 
 
-Underfull \hbox (badness 1694) in paragraph at lines 851--851
+Underfull \hbox (badness 1694) in paragraph at lines 1222--1222
 []|\T1/lmr/m/n/10.95 TRAFFIC mott Q $\OMS/lmsy/m/n/10.95 !$
  []
 
@@ -1667,15 +1786,7 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[18]
-
-Package fancyhdr Warning: \headheight is too small (14.0pt): 
-(fancyhdr)                Make it at least 23.11996pt, for example:
-(fancyhdr)                \setlength{\headheight}{23.11996pt}.
-(fancyhdr)                You might also make \topmargin smaller:
-(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
-
-[19]
+[28]
 File: ../../Pictures/Figure15.png Graphic file (type bmp)
 <../../Pictures/Figure15.png>
 
@@ -1686,7 +1797,7 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[20]
+[29]
 File: ../../Pictures/Figure16.png Graphic file (type bmp)
 <../../Pictures/Figure16.png>
 
@@ -1697,7 +1808,12 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[21]
+[30]
+File: ../../Pictures/Figure17.png Graphic file (type bmp)
+<../../Pictures/Figure17.png>
+
+Missing character: There is no → in font ec-lmr10!
+Missing character: There is no → in font ec-lmr10!
 
 Package fancyhdr Warning: \headheight is too small (14.0pt): 
 (fancyhdr)                Make it at least 23.11996pt, for example:
@@ -1705,7 +1821,59 @@ Package fancyhdr Warning: \headheight is too small (14.0pt):
 (fancyhdr)                You might also make \topmargin smaller:
 (fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
 
-[22] 
+[31]
+File: ../../Pictures/Figure18.png Graphic file (type bmp)
+<../../Pictures/Figure18.png>
+
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[32]
+File: ../../Pictures/Figure19.png Graphic file (type bmp)
+<../../Pictures/Figure19.png>
+
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[33]
+File: ../../Pictures/Figure20.png Graphic file (type bmp)
+<../../Pictures/Figure20.png>
+
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[34]
+File: ../../Pictures/Figure21.png Graphic file (type bmp)
+<../../Pictures/Figure21.png>
+
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[35]
+
+Package fancyhdr Warning: \headheight is too small (14.0pt): 
+(fancyhdr)                Make it at least 23.11996pt, for example:
+(fancyhdr)                \setlength{\headheight}{23.11996pt}.
+(fancyhdr)                You might also make \topmargin smaller:
+(fancyhdr)                \addtolength{\topmargin}{-9.11996pt}.
+
+[36] 
 enddocument/afterlastpage (AED): lastpage setting LastPage.
 (user_manual_v3.aux)
  ***********
@@ -1713,15 +1881,15 @@ LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
 Package rerunfilecheck Info: File `user_manual_v3.out' has not changed.
-(rerunfilecheck)             Checksum: 49C40EAF7154D308077C99A0C5BB17BD;2179.
+(rerunfilecheck)             Checksum: F6ECA76B7E3744570FDDAA35A9DC89ED;9983.
  ) 
 Here is how much of TeX's memory you used:
- 31669 strings out of 402983
- 633949 string characters out of 5447861
- 1146931 words of memory out of 5000000
- 59881 multiletter control sequences out of 15000+600000
- 711566 words of font info for 92 fonts, out of 8000000 for 9000
+ 31796 strings out of 402983
+ 636970 string characters out of 5447861
+ 1162227 words of memory out of 5000000
+ 59998 multiletter control sequences out of 15000+600000
+ 717552 words of font info for 94 fonts, out of 8000000 for 9000
  1348 hyphenation exceptions out of 8191
- 86i,17n,98p,1205b,1322s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 86i,16n,98p,1205b,1322s stack positions out of 10000i,1000n,20000p,200000b,200000s
 
-Output written on user_manual_v3.pdf (24 pages).
+Output written on user_manual_v3.pdf (38 pages).

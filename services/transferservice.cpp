@@ -4,20 +4,158 @@
 #include <QRegularExpression>
 #include <QDate>
 #include <cmath>
+#include <QCoreApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
+#include <QFile>
 
-// Round to 5 decimal places: first divide by 1000, then round to keep 5 decimals
+// Round to 5 decimal places
 static double roundTo5(double v) {
     return std::round(v * 100000.0) / 100000.0;
 }
 
+// EvaluateF a simple Excel formula by reading cell values from the workbook.
+// Expanded to support: =SUM(X1:X5), =SUM(X1,X3,X5), =X1+X2-X3, and division by constants (e.g. /1000).
+static double evaluateSimpleFormula(ExcelHandler* handler, const QString& key,
+                                    const QString& sheet, const QString& formula)
+{
+    if (!handler || formula.isEmpty()) return 0.0;
+
+    QString f = formula.trimmed();
+    if (f.startsWith('=')) f = f.mid(1);
+    f.remove('$');
+    if (f.startsWith('+')) f = f.mid(1);
+
+    // Look for division suffix like "/1000" or "/-1000"
+    double divisor = 1.0;
+    static const QRegularExpression divRx("/\\s*(-?[0-9.]+)\\s*$");
+    auto divMatch = divRx.match(f);
+    if (divMatch.hasMatch()) {
+        divisor = divMatch.captured(1).toDouble();
+        if (divisor == 0) divisor = 1.0;
+        f = f.left(divMatch.capturedStart()).trimmed();
+    }
+
+    auto readCell = [&](const QString& cellRef) -> double {
+        static const QRegularExpression cellRefRx("^([A-Z]+)(\\d+)$", QRegularExpression::CaseInsensitiveOption);
+        auto m = cellRefRx.match(cellRef.trimmed());
+        if (!m.hasMatch()) return 0.0;
+        QString col = m.captured(1);
+        int row = m.captured(2).toInt();
+        QVariant val = handler->getCellValue(key, sheet, row, handler->letterToColumn(col));
+        return val.canConvert<double>() ? val.toDouble() : 0.0;
+    };
+
+    auto sumRange = [&](const QString& rangeStr) -> double {
+        static const QRegularExpression rangeRx("^([A-Z]+)(\\d+):([A-Z]+)(\\d+)$", QRegularExpression::CaseInsensitiveOption);
+        auto m = rangeRx.match(rangeStr.trimmed());
+        if (!m.hasMatch()) return readCell(rangeStr);
+        
+        QString col1 = m.captured(1).toUpper(), col2 = m.captured(3).toUpper();
+        int row1 = m.captured(2).toInt(), row2 = m.captured(4).toInt();
+        double total = 0.0;
+        
+        if (col1 == col2) {
+            int c = handler->letterToColumn(col1);
+            for (int r = qMin(row1, row2); r <= qMax(row1, row2); ++r) {
+                QVariant v = handler->getCellValue(key, sheet, r, c);
+                if (v.canConvert<double>()) total += v.toDouble();
+            }
+        } else if (row1 == row2) {
+            int c1 = handler->letterToColumn(col1), c2 = handler->letterToColumn(col2);
+            for (int c = qMin(c1, c2); c <= qMax(c1, c2); ++c) {
+                QVariant v = handler->getCellValue(key, sheet, row1, c);
+                if (v.canConvert<double>()) total += v.toDouble();
+            }
+        }
+        return total;
+    };
+
+    static const QRegularExpression sumRx("^SUM\\((.+)\\)$", QRegularExpression::CaseInsensitiveOption);
+    auto sumMatch = sumRx.match(f);
+    double resultValue = 0.0;
+
+    if (sumMatch.hasMatch()) {
+        QString inner = sumMatch.captured(1);
+        QStringList parts = inner.split(',');
+        for (const QString& part : parts) resultValue += sumRange(part.trimmed());
+    } else {
+        double currentResult = 0.0;
+        int sign = 1;
+        int i = 0;
+        QString token;
+        while (i <= f.size()) {
+            QChar ch = (i < f.size()) ? f[i] : QChar('+');
+            if (ch == '+' || ch == '-') {
+                token = token.trimmed();
+                if (!token.isEmpty()) {
+                    bool ok = false;
+                    double num = token.toDouble(&ok);
+                    currentResult += sign * (ok ? num : readCell(token));
+                }
+                sign = (ch == '+') ? 1 : -1;
+                token.clear();
+            } else {
+                token += ch;
+            }
+            ++i;
+        }
+        resultValue = currentResult;
+    }
+
+    return (divisor != 1.0) ? (resultValue / divisor) : resultValue;
+}
+
 TransferService::TransferService(ExcelHandler* handler, QObject* parent)
-    : QObject(parent), m_handler(handler) {}
+    : QObject(parent), m_handler(handler) 
+{
+    loadSubtotals();
+}
+
+void TransferService::loadSubtotals()
+{
+    QString configPath = QCoreApplication::applicationDirPath() + "/config/mzlz_subtotals.json";
+    QFile file(configPath);
+    if (!file.exists()) {
+        configPath = "C:/Users/dposavac/CLionProjects/Excel_transfer/config/mzlz_subtotals.json";
+        file.setFileName(configPath);
+    }
+
+    if (file.open(QIODevice::ReadOnly)) {
+        QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        QJsonObject obj = doc.object();
+        for (auto it = obj.begin(); it != obj.end(); ++it) {
+            m_subtotalsMap.insert(it.key().toInt(), it.value().toString());
+        }
+        qDebug() << "[TransferService] Loaded" << m_subtotalsMap.size() << "subtotal formulas from JSON.";
+    } else {
+        qWarning() << "[TransferService] Could not load mzlz_subtotals.json from" << configPath;
+    }
+}
+
+static const QStringList monthOrder = {
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+};
+// Index 0=Jan, 1=Feb, 2=Mar, 3=Apr, 4=May, 5=Jun, 6=Jul, 7=Aug, 8=Sep, 9=Oct, 10=Nov, 11=Dec
+static const QStringList baseColOrder = {
+    "G", "W", "AM", "BD", "BW", "CP", "DJ", "EF", "FB", "FY", "GX", "HW"
+};
+// IP=Jan(0), IQ=Feb(1), IR=Mar(2), IS=Apr(3), IT=May(4), IU=Jun(5), IV=Jul(6), IW=Aug(7), IX=Sep(8), IY=Oct(9), IZ=Nov(10)
+static const QStringList cumColOrder = {
+    "IP", "IQ", "IR", "IS", "IT", "IU", "IV", "IW", "IX", "IY", "IZ"
+};
+// Row 212 is a YTD value — direct copy to cumulative, no horizontal accumulation.
+static const QSet<int> directCopyRows = { 212 };
+
 
 TransferService::Result TransferService::transferEntry(const MappingEntry& entry,
                                                        int year,
                                                        const QString& destKey,
                                                        const QString& destFilePath,
-                                                       const QString& baseFolder) {
+                                                       const QString& baseFolder,
+                                                       bool skipCumulative) {
     QElapsedTimer timer;
     timer.start();
     Result result;
@@ -88,12 +226,8 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
         return res;
     }
 
-    if (sourceFileType == "ytd") {
-        TransferService::Result res = handleYtd(entry, year, destKey, destFilePath);
-        qDebug() << "transferEntry END" << entry.sourceSheetTemplate << "cells" << res.cellsTransferred
-                 << "elapsed" << timer.elapsed() << "ms";
-        return res;
-    }
+    // handleYtd removed — cumulative columns are now computed exclusively by
+    // runCumulativePass / runCumulativePassAllMonths after all data is written.
 
     QVector<int> srcRows = entry.sourceRows;
     QVector<int> destRows = entry.destRows;
@@ -266,12 +400,11 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
             m_handler->setCellValue(destKey, destSheet, destRow, destColIndex, total);
             result.cellsTransferred++;
 
+            // Q column in TRAFFIC mott 2025 sheet contains Excel SUM formulas — leave them alone.
+            // JG values in MZLZ Consolidated are now computed directly from the external
+            // TRAFFIC mott xlsx by summing G..currentMonthCol in handleSapYtd.
         }
 
-        // Q column in TRAFFIC mott 2025 sheet contains Excel SUM formulas — leave them alone.
-        // JG values in MZLZ Consolidated are now computed directly from the external
-        // TRAFFIC mott xlsx by summing G..currentMonthCol in handleSapYtd.
-    } else if (!srcRows.isEmpty()) {
         // Q column in TRAFFIC mott 2025 sheet contains Excel SUM formulas — leave them alone.
         // JG values in MZLZ Consolidated are now computed directly from the external
         // TRAFFIC mott xlsx by summing G..currentMonthCol in handleSapYtd.
@@ -299,118 +432,206 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
         }
     }
 
-    // Update cumulative columns IP-IZ for MZLZ Consolidated (Jan-Nov)
-    if (entry.destSheet == "MZLZ Consolidated") {
-        static const QStringList monthOrder = {
-            "January", "February", "March", "April", "May", "June",
-            "July", "August", "September", "October", "November", "December"
-        };
-        static const QMap<QString, QString> baseCols = {
-            {"January", "G"}, {"February", "W"}, {"March", "AM"}, {"April", "BD"},
-            {"May", "BW"}, {"June", "CP"}, {"July", "DJ"}, {"August", "EF"},
-            {"September", "FB"}, {"October", "FY"}, {"November", "GX"}, {"December", "HW"}
-        };
-        static const QMap<QString, QString> budgetBaseCols = {
-            {"January", "F"}, {"February", "V"}, {"March", "AL"}, {"April", "BB"},
-            {"May", "BU"}, {"June", "CN"}, {"July", "DG"}, {"August", "EC"},
-            {"September", "EY"}, {"October", "FU"}, {"November", "GT"}, {"December", "HS"}
-        };
-        static const QMap<QString, QString> cumCols = {
-            {"January", "IP"}, {"February", "IQ"}, {"March", "IR"}, {"April", "IS"},
-            {"May", "IT"}, {"June", "IU"}, {"July", "IV"}, {"August", "IW"},
-            {"September", "IX"}, {"October", "IY"}, {"November", "IZ"}
-        };
-
-        int monthIdx = monthOrder.indexOf(month);
-        QString expectedBase = baseCols.value(month);
-        if (monthIdx >= 0 && !expectedBase.isEmpty() && entry.destColumn == expectedBase) {
-            int sumEnd = (monthIdx == 0) ? 0 : monthIdx - 1; // month-1 cumulative (Jan uses Jan)
-            QSet<int> rowsToSum;
-            if (!entry.rowMap.isEmpty()) {
-                for (auto it = entry.rowMap.constBegin(); it != entry.rowMap.constEnd(); ++it) {
-                    rowsToSum.insert(it.key());
-                }
-            } else {
-                rowsToSum = QSet<int>(entry.destRows.begin(), entry.destRows.end());
-            }
-            for (int extraRow : entry.cumulativeRows) {
-                rowsToSum.insert(extraRow);
-            }
-            // Always include rows 118–123 in cumulative sums
-            for (int r = 115; r <= 123; ++r) rowsToSum.insert(r);
-            // Rows 13, 16 and 18 are transfer-only — never include in cumulative IP–IZ sums
-            rowsToSum.remove(13);
-            rowsToSum.remove(16);
-            rowsToSum.remove(18);
-
-            for (int row : rowsToSum) {
-                double cumulative = 0.0;
-                for (int i = 0; i <= sumEnd; ++i) {
-                    const QString& m = monthOrder[i];
-                    QString baseCol = baseCols.value(m);
-                    if (row >= 115 && row <= 123 && !budgetBaseCols.value(m).isEmpty()
-                        && entry.destColumn != expectedBase) {
-                        baseCol = budgetBaseCols.value(m);
-                    }
-                    if (baseCol.isEmpty()) continue;
-
-                    QVariant raw = m_handler->getCellValue(destKey, entry.destSheet, row,
-                                                          m_handler->letterToColumn(baseCol));
-                    bool ok = false;
-                    double val = raw.toDouble(&ok);
-                    if (!ok) {
-                        val = 0.0;
-                        // DO NOT write 0 back to the cell — that overwrites formula cells
-                        // in months we didn't select, causing the Excel repair dialog.
-                    }
-                    if (row >= 115 && row <= 123) {
-                        val = roundTo5(val);
-                    }
-                    if (row == 115) {
-                        qDebug() << "Cum row118" << m << baseCol << "=" << val;
-                    }
-                    cumulative += val;
-                }
-
-                // Write to cumulative column of the previous month (month-1), except January
-                int writeIdx = (monthIdx == 0) ? 0 : monthIdx - 1;
-                const QString cumCol = cumCols.value(monthOrder[writeIdx]);
-                if (!cumCol.isEmpty()) {
-                    cumulative = roundTo5(cumulative);
-                    if (row == 115) {
-                        qDebug() << "Cum row118 write" << cumCol << "=" << cumulative;
-                    }
-                    m_handler->setCellValue(destKey, entry.destSheet, row,
-                                            m_handler->letterToColumn(cumCol), cumulative);
-                }
-            }
-        }
-    }
-
-    // Optional: copy full sheet if user explicitly enabled it for this mapping
-    if (entry.copyFullSheet) { 
-        if (sourceSheet.isEmpty()) {
-            qWarning() << "TransferService: copyFullSheet requested but sourceSheetTemplate empty";
-        } else {
-            const QString targetName = entry.customSheetName.isEmpty() ? sourceSheet : entry.customSheetName;
-            bool ok = m_handler->copyFullSheet(srcKey, sourceSheet, destKey, targetName, entry.sourceRows);
-            if (ok && !entry.insertAfterSheet.isEmpty()) {
-                m_handler->setInsertAfter(destKey, targetName, entry.insertAfterSheet);
-            }
-            if (!ok) {
-                qWarning() << "TransferService: copyFullSheet failed for" << sourceSheet;
-            } else {
-                result.usedComCopy = true;
-            }
-        }
-    }
-
     // Saving is handled by TransferWorker after all mappings finish
+
+    // ── MZLZ Consolidated Auto-Sum ───────────────────────────────────────────
+    // Cumulative pass is NO LONGER run here per-mapping.
+    // TransferWorker runs it ONCE after ALL mappings for a given month have
+    // finished writing their base data. This prevents stale intermediate
+    // values when multiple mappings target the same cumulative columns.
+    // Fill All uses its own dedicated runCumulativePassAllMonths call.
 
     qDebug() << "transferEntry END" << entry.sourceSheetTemplate << "cells" << result.cellsTransferred
              << "elapsed" << timer.elapsed() << "ms";
     return result;
 }
+
+// ── Execute All cumulative pass ─────────────────────────────────────────────
+// Computes ONLY the single cumulative column for (targetMonth - 1).
+// e.g. if user selects October (idx 9), computes IX (idx 8) = IW + FB.
+// Trusts all existing cumulative values in the spreadsheet.
+// The target month's own column (IY for Oct) is NOT touched.
+void TransferService::runCumulativePassExecuteAll(const QSet<int>& allRows,
+                                                   const QString& destSheet,
+                                                   int year,
+                                                   const QString& destKey,
+                                                   const QString& targetMonth)
+{
+    Q_UNUSED(year);
+    if (!m_handler) return;
+
+    int targetIdx = monthOrder.indexOf(targetMonth);
+    if (targetIdx <= 0) return; // nothing to compute for January or invalid
+
+    // Compute month-1 cumulative column. NEVER touch the target month's column.
+    // e.g. October (idx 9) → compute cumColOrder[8] = IX = IW + FB
+    int colToCompute = targetIdx - 1;
+    if (colToCompute >= cumColOrder.size()) return;
+
+    int cumColIdx  = m_handler->letterToColumn(cumColOrder[colToCompute]);
+    int baseColIdx = m_handler->letterToColumn(baseColOrder[colToCompute]); // base data for month-1
+
+    // Previous cumulative column (if any). For colToCompute==0 (IP/Jan), there's no previous.
+    int prevCumColIdx = -1;
+    if (colToCompute > 0) {
+        prevCumColIdx = m_handler->letterToColumn(cumColOrder[colToCompute - 1]);
+    }
+
+    QSet<int> rowsToSum = allRows;
+    for (int r : m_subtotalsMap.keys()) rowsToSum.insert(r);
+    // Force inclusion of all MZLZ Report rows so empty/unmapped rows get a literal 0 instead of blank
+    for (int r = 5; r <= 235; ++r) rowsToSum.insert(r);
+
+    qDebug() << "[CUM_EXEC_ALL] targetMonth=" << targetMonth
+             << "computing column" << cumColOrder[colToCompute]
+             << "= prev(" << (colToCompute > 0 ? cumColOrder[colToCompute - 1] : "none")
+             << ") + base(" << baseColOrder[colToCompute] << ")"
+             << "rows=" << rowsToSum.size();
+
+    // ── PASS 1: Normal Rows (prevCum + baseVal) ──
+    for (int row : rowsToSum) {
+        if (m_subtotalsMap.contains(row)) {
+            continue; // Subtotals handled in Pass 2
+        }
+
+        // If there is no descriptive text in Column B (index 2), treat it as an aesthetic spacer and skip
+        if (m_handler->getCellValue(destKey, destSheet, row, 2).toString().trimmed().isEmpty()) {
+            continue;
+        }
+
+        double prevCum = 0.0;
+        if (prevCumColIdx >= 0) {
+            QVariant prevRaw = m_handler->getCellValue(destKey, destSheet, row, prevCumColIdx);
+            prevCum = prevRaw.canConvert<double>() ? prevRaw.toDouble() : 0.0;
+
+            if (prevCum == 0.0) {
+                QString formula = m_handler->getCellFormula(destKey, destSheet, row, prevCumColIdx);
+                if (!formula.isEmpty()) {
+                    double formulaVal = evaluateSimpleFormula(m_handler, destKey, destSheet, formula);
+                    if (formula.contains('!') && formulaVal == 0.0 && prevCum != 0.0) {
+                        // Trust cached
+                    } else if (formulaVal != 0.0 || prevCum == 0.0) {
+                        prevCum = formulaVal;
+                    }
+                }
+            }
+        }
+
+        QVariant baseRaw = m_handler->getCellValue(destKey, destSheet, row, baseColIdx);
+        double baseVal = baseRaw.canConvert<double>() ? baseRaw.toDouble() : 0.0;
+
+        if (baseVal == 0.0) {
+            QString formula = m_handler->getCellFormula(destKey, destSheet, row, baseColIdx);
+            if (!formula.isEmpty()) {
+                double formulaVal = evaluateSimpleFormula(m_handler, destKey, destSheet, formula);
+                if (formula.contains('!') && formulaVal == 0.0 && baseVal != 0.0) {
+                    // Trust cached
+                } else if (formulaVal != 0.0 || baseVal == 0.0) {
+                    baseVal = formulaVal;
+                }
+            }
+        }
+
+        if (directCopyRows.contains(row)) {
+            m_handler->setCellValue(destKey, destSheet, row, cumColIdx, roundTo5(baseVal));
+        } else {
+            m_handler->setCellValue(destKey, destSheet, row, cumColIdx, roundTo5(prevCum + baseVal));
+        }
+    }
+
+    // ── PASS 2: Subtotals (dynamically evaluated natively on cumulative column) ──
+    QList<int> subRows = m_subtotalsMap.keys();
+    std::sort(subRows.begin(), subRows.end());
+    QString currentCumLetter = cumColOrder[colToCompute];
+    for (int row : subRows) {
+        QString actualFormula = m_subtotalsMap.value(row);
+        actualFormula.replace("HW", currentCumLetter);
+        
+        double subtotal = evaluateSimpleFormula(m_handler, destKey, destSheet, actualFormula);
+        m_handler->setCellValue(destKey, destSheet, row, cumColIdx, roundTo5(subtotal));
+    }
+}
+
+
+void TransferService::runCumulativePassAllMonths(const QSet<int>& allRows,
+                                                  const QString& destSheet,
+                                                  int year,
+                                                  const QString& destKey,
+                                                  const QString& targetMonth)
+{
+    Q_UNUSED(year);
+    if (!m_handler) return;
+
+    int targetIdx = monthOrder.indexOf(targetMonth);
+    if (targetIdx < 0) return;
+
+    // Use the complete row set passed in, plus subtotals
+    QSet<int> rowsToSum = allRows;
+    for (int r : m_subtotalsMap.keys()) rowsToSum.insert(r);
+    // Force inclusion of all MZLZ Report rows so empty/unmapped rows get a literal 0 instead of blank
+    for (int r = 5; r <= 235; ++r) rowsToSum.insert(r);
+
+    qDebug() << "[CUM_PASS_ALL] targetMonth=" << targetMonth
+             << "columns 0.." << targetIdx
+             << "rows=" << rowsToSum.size();
+
+    QMap<int, double> runningSums;
+    for (int m = 0; m <= targetIdx && m < cumColOrder.size(); ++m) {
+        int cumColIdx  = m_handler->letterToColumn(cumColOrder[m]);  // IP, IQ, IR, ...
+        int baseColIdx = m_handler->letterToColumn(baseColOrder[m]); // G, W, AM, ...
+
+        qDebug() << "  [CUM_PASS_ALL] m=" << m
+                 << "baseCol=" << baseColOrder[m] << "cumCol=" << cumColOrder[m];
+
+        // ── PASS 1: Normal Rows (Calculate accumulating sums) ──
+        for (int row : rowsToSum) {
+            if (m_subtotalsMap.contains(row)) {
+                continue; // Handled dynamically in Pass 2
+            }
+
+            // If there is no descriptive text in Column B (index 2), treat it as an aesthetic spacer and skip
+            if (m_handler->getCellValue(destKey, destSheet, row, 2).toString().trimmed().isEmpty()) {
+                continue;
+            }
+
+            QVariant raw = m_handler->getCellValue(destKey, destSheet, row, baseColIdx);
+            double val = raw.canConvert<double>() ? raw.toDouble() : 0.0;
+
+            if (val == 0.0) {
+                QString formula = m_handler->getCellFormula(destKey, destSheet, row, baseColIdx);
+                if (!formula.isEmpty()) {
+                    double formulaVal = evaluateSimpleFormula(m_handler, destKey, destSheet, formula);
+                    if (formula.contains('!') && formulaVal == 0.0 && val != 0.0) {
+                        // Trust cached value
+                    } else if (formulaVal != 0.0 || val == 0.0) {
+                        val = formulaVal;
+                    }
+                }
+            }
+
+            if (directCopyRows.contains(row)) {
+                runningSums[row] = val;
+            } else {
+                runningSums[row] += val;
+            }
+            m_handler->setCellValue(destKey, destSheet, row, cumColIdx, roundTo5(runningSums[row]));
+        }
+
+        // ── PASS 2: Subtotals (dynamically calculate from the newly generated YTD column) ──
+        QList<int> subRows = m_subtotalsMap.keys();
+        std::sort(subRows.begin(), subRows.end());
+        QString currentCumLetter = cumColOrder[m];
+        for (int row : subRows) {
+            QString actualFormula = m_subtotalsMap.value(row);
+            actualFormula.replace("HW", currentCumLetter);
+            
+            double subtotal = evaluateSimpleFormula(m_handler, destKey, destSheet, actualFormula);
+            runningSums[row] = subtotal; // Keep the running map in sync for correctness
+            m_handler->setCellValue(destKey, destSheet, row, cumColIdx, roundTo5(subtotal));
+        }
+    }
+}
+
 
 TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
                                                       int year,
@@ -642,60 +863,6 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
                 return result;
             }
         }
-    }
-
-    return result;
-}
-
-TransferService::Result TransferService::handleYtd(const MappingEntry& entry,
-                                                   int year,
-                                                   const QString& destKey,
-                                                   const QString& destFilePath) {
-    Q_UNUSED(year);
-    Result result;
-
-    const QMap<QString, QPair<QString, QString>> monthToYtdCol = {
-        {"January", {"IP", ""}}, {"February", {"IQ", "IP"}}, {"March", {"IR", "IQ"}},
-        {"April", {"IS", "IR"}}, {"May", {"IT", "IS"}}, {"June", {"IU", "IT"}},
-        {"July", {"IV", "IU"}}, {"August", {"IW", "IV"}}, {"September", {"IX", "IW"}},
-        {"October", {"IY", "IX"}}, {"November", {"IZ", "IY"}}, {"December", {"", ""}}
-    };
-
-    const QMap<QString, QString> monthToDestCol = {
-        {"January", "G"}, {"February", "W"}, {"March", "AM"}, {"April", "BD"},
-        {"May", "BW"}, {"June", "CP"}, {"July", "DJ"}, {"August", "EF"},
-        {"September", "FB"}, {"October", "FY"}, {"November", "GX"}, {"December", "HW"}
-    };
-
-    auto ytdCols = monthToYtdCol.value(entry.month, {"", ""});
-    QString ytdCol = ytdCols.first;
-    QString prevCol = ytdCols.second;
-    if (ytdCol.isEmpty()) {
-        return result;
-    }
-
-    QString currCol = monthToDestCol.value(entry.month, "G");
-    const QVector<int> destRows = entry.destRows;
-
-    for (int destRow : destRows) {
-        double currVal = 0.0;
-        double prevVal = 0.0;
-        QVariant currRaw = m_handler->getCellValue(destKey, entry.destSheet, destRow,
-                                                   m_handler->letterToColumn(currCol));
-        if (currRaw.canConvert<double>()) {
-            currVal = currRaw.toDouble();
-        }
-        if (!prevCol.isEmpty()) {
-            QVariant prevRaw = m_handler->getCellValue(destKey, entry.destSheet, destRow,
-                                                       m_handler->letterToColumn(prevCol));
-            if (prevRaw.canConvert<double>()) {
-                prevVal = prevRaw.toDouble();
-            }
-        }
-        double ytdVal = currVal + prevVal;
-        m_handler->setCellValue(destKey, entry.destSheet, destRow,
-                                m_handler->letterToColumn(ytdCol), ytdVal);
-        result.cellsTransferred++;
     }
 
     return result;

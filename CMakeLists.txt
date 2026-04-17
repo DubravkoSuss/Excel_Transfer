@@ -24,6 +24,14 @@ add_executable(ExcelTransfer
         ui/hybridtransfertab.h
         ui/customtabbar.cpp
         ui/customtabbar.h
+        ui/excelsearchtab.cpp
+        ui/excelsearchtab.h
+        ui/yearrollovertab.cpp
+        ui/yearrollovertab.h
+        features/search/excelsearchservice.cpp
+        features/search/excelsearchservice.h
+        features/rollover/rolloverworker.cpp
+        features/rollover/rolloverworker.h
         services/excelhandler.cpp
         services/excelhandler.h
         services/breaklinks.cpp

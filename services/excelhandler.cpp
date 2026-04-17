@@ -2407,6 +2407,23 @@ bool ExcelHandler::setCellFormula(const QString& key, const QString& sheetName, 
     return true;
 }
 
+QString ExcelHandler::getCellFormula(const QString& key, const QString& sheetName, int row, int col)
+{
+    if (sheetName.trimmed().isEmpty() || !isValidCellAddress(row, col))
+        return QString();
+    QWriteLocker locker(&m_lock);
+    if (!m_workbooks.contains(key))
+        return QString();
+
+    SheetData& sheet = getSheet(key, sheetName);
+    QString cellRef  = buildCellRef(columnToLetter(col), row);
+    auto cellIt      = sheet.cells.find(cellRef);
+    if (cellIt == sheet.cells.end())
+        return QString();
+
+    return cellIt->formula;
+}
+
  //  transferData  ” fully in-memory, no COM (ported from Excel_transfer_23_3)
 
 int ExcelHandler::transferData(const QString& srcKey, const QString& srcSheet, const QString& srcCol,
