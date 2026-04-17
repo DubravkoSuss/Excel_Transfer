@@ -146,8 +146,8 @@ static const QStringList baseColOrder = {
 static const QStringList cumColOrder = {
     "IP", "IQ", "IR", "IS", "IT", "IU", "IV", "IW", "IX", "IY", "IZ"
 };
-// Row 212 is a YTD value — direct copy to cumulative, no horizontal accumulation.
-static const QSet<int> directCopyRows = { 212 };
+// Direct copy rows that should avoid horizontal accumulation (empty as per user request to bring 212 back into cum sum)
+static const QSet<int> directCopyRows = {};
 
 
 TransferService::Result TransferService::transferEntry(const MappingEntry& entry,
