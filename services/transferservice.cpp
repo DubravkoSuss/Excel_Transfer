@@ -146,8 +146,8 @@ static const QStringList baseColOrder = {
 static const QStringList cumColOrder = {
     "IP", "IQ", "IR", "IS", "IT", "IU", "IV", "IW", "IX", "IY", "IZ"
 };
-// Direct copy rows that should avoid horizontal accumulation (empty as per user request to bring 212 back into cum sum)
-static const QSet<int> directCopyRows = {};
+// Rows that should avoid horizontal accumulation (Direct Copy from base month to cumulative)
+static const QSet<int> directCopyRows = { 16, 18, 13, 12 };
 
 
 TransferService::Result TransferService::transferEntry(const MappingEntry& entry,
