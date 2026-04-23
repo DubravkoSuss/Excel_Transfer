@@ -10,6 +10,8 @@
 #include <QDateTime>
 #include <QDir>
 #include <QDebug>
+#include <QTextStream>
+#include <QCoreApplication>
 
 // ═══════════════════════════════════════════════════════════════════════════
 // columnToNumber — "A"→1, "B"→2, "AA"→27, etc.
@@ -277,38 +279,62 @@ UpdateResult MappingUpdater::updateMappings(
              << "labels (cols" << srcLabelCols << "), Dest index:" << dstIndex.size()
              << "labels (cols" << dstLabelCols << ")";
 
-    // DEBUG: check specific cells
+    // DEBUG: write diagnostic to file
     {
-        // Source B825 should contain "**          751180  GH Supporting staff"
-        QVariant dbgVal = handler.getCellValue(srcKey, sourceSheet, 825, 2);
-        qDebug() << "[MappingUpdater] DEBUG src B825 =" << dbgVal;
-        // Dest C56 should contain "751180  GH Supporting staff"
-        QVariant dbgVal2 = handler.getCellValue(dstKey, destSheet, 56, 3);
-        qDebug() << "[MappingUpdater] DEBUG dst C56 =" << dbgVal2;
-        // Dest B56 should contain "GH Supporting staff"
-        QVariant dbgVal3 = handler.getCellValue(dstKey, destSheet, 56, 2);
-        qDebug() << "[MappingUpdater] DEBUG dst B56 =" << dbgVal3;
+        QFile dbgFile(QCoreApplication::applicationDirPath() + "/mapping_debug.txt");
+        if (dbgFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            QTextStream ts(&dbgFile);
+            ts << "Source index size: " << srcIndex.size() << "\n";
+            ts << "Dest index size: " << dstIndex.size() << "\n\n";
 
-        // Check if normalize matches
-        QString normLabel = normalize("751180  GH Supporting staff");
-        qDebug() << "[MappingUpdater] DEBUG norm label =" << normLabel;
-        qDebug() << "[MappingUpdater] DEBUG srcIndex contains?" << srcIndex.contains(normLabel)
-                 << "dstIndex contains?" << dstIndex.contains(normLabel);
+            // Source B825 should contain "**          751180  GH Supporting staff"
+            QVariant dbgVal = handler.getCellValue(srcKey, sourceSheet, 825, 2);
+            ts << "src B825 = " << dbgVal.toString() << "\n";
+            // Dest C56 should contain "751180  GH Supporting staff"
+            QVariant dbgVal2 = handler.getCellValue(dstKey, destSheet, 56, 3);
+            ts << "dst C56 = " << dbgVal2.toString() << "\n";
+            // Dest B56 should contain "GH Supporting staff"
+            QVariant dbgVal3 = handler.getCellValue(dstKey, destSheet, 56, 2);
+            ts << "dst B56 = " << dbgVal3.toString() << "\n\n";
 
-        // Dump first 10 entries from srcIndex containing "gh"
-        int cnt = 0;
-        for (auto it = srcIndex.begin(); it != srcIndex.end() && cnt < 200; ++it) {
-            if (it.key().contains("gh") || it.key().contains("751")) {
-                qDebug() << "[MappingUpdater] DEBUG srcIdx:" << it.key() << "-> row" << it.value();
-                cnt++;
+            // Check if normalize matches
+            QString normLabel = normalize("751180  GH Supporting staff");
+            ts << "norm('751180  GH Supporting staff') = " << normLabel << "\n";
+            ts << "srcIndex contains? " << srcIndex.contains(normLabel) << "\n";
+            ts << "dstIndex contains? " << dstIndex.contains(normLabel) << "\n\n";
+
+            // Dump entries from srcIndex containing "gh" or "751"
+            ts << "=== SOURCE INDEX (gh/751 entries) ===\n";
+            for (auto it = srcIndex.begin(); it != srcIndex.end(); ++it) {
+                if (it.key().contains("gh") || it.key().contains("751")) {
+                    ts << "  " << it.key() << " -> row " << it.value() << "\n";
+                }
             }
-        }
-        cnt = 0;
-        for (auto it = dstIndex.begin(); it != dstIndex.end() && cnt < 200; ++it) {
-            if (it.key().contains("gh") || it.key().contains("751")) {
-                qDebug() << "[MappingUpdater] DEBUG dstIdx:" << it.key() << "-> row" << it.value();
-                cnt++;
+
+            ts << "\n=== DEST INDEX (gh/751 entries) ===\n";
+            for (auto it = dstIndex.begin(); it != dstIndex.end(); ++it) {
+                if (it.key().contains("gh") || it.key().contains("751")) {
+                    ts << "  " << it.key() << " -> row " << it.value() << "\n";
+                }
             }
+
+            // Also dump entries for "ias", "writeoff", "amortisation"
+            ts << "\n=== SOURCE INDEX (ias/writeoff/amort entries) ===\n";
+            for (auto it = srcIndex.begin(); it != srcIndex.end(); ++it) {
+                if (it.key().contains("ias") || it.key().contains("writeoff") || it.key().contains("amortisation")) {
+                    ts << "  " << it.key() << " -> row " << it.value() << "\n";
+                }
+            }
+            ts << "\n=== DEST INDEX (ias/writeoff/amort entries) ===\n";
+            for (auto it = dstIndex.begin(); it != dstIndex.end(); ++it) {
+                if (it.key().contains("ias") || it.key().contains("writeoff") || it.key().contains("amortisation")) {
+                    ts << "  " << it.key() << " -> row " << it.value() << "\n";
+                }
+            }
+
+            dbgFile.close();
+            result.warnings << QString("DEBUG: wrote mapping_debug.txt (%1 src, %2 dst entries)")
+                                   .arg(srcIndex.size()).arg(dstIndex.size());
         }
     }
 

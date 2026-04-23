@@ -2317,7 +2317,13 @@ QVariant ExcelHandler::getCellValue(const QString& key, const QString& sheetName
     if (cellIt == sheet.cells.end())
         return QVariant();
 
-    const QString& val = cellIt->value;
+    const CellData& cell = cellIt.value();
+    const QString& val = cell.value;
+
+    // Shared strings ("s") and inline strings ("str") are always text — never parse as number
+    if (cell.dataType == "s" || cell.dataType == "str" || cell.dataType == "inlineStr")
+        return val;
+
     bool ok = false;
     double d = parseNumericString(val, &ok);
     if (ok) return d;

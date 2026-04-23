@@ -136,6 +136,22 @@
     { "label": "INCOME TAX" },
     { "label": "ZAIC running cost" },
     { "label": "DEFERRED TAX ASSET" },
+    {
+      "source_label": "441000  Contracted health services",
+      "dest_label": "Contracted health services (Dom zdravlja)"
+    },
+    {
+      "source_label": "441700  other non production servic",
+      "dest_label": "Firefighters (DVD Hrašče, Securitas)"
+    },
+    {
+      "source_label": "446100  Utility charges for land us",
+      "dest_label": "Utility charges for land use"
+    },
+    {
+      "source_label": "446550  Water management contrib.",
+      "dest_label": "Water management contrib."
+    },
 
     {
       "type": "sum",
@@ -181,6 +197,24 @@
         "MZLZ Staff",
         "EU projects salary"
       ]
+    },
+    {
+      "type": "sum",
+      "dest_label": "GH IT services",
+      "source_labels": [
+        "751181  GH IT services",
+        "751182  GH ICT services"
+      ]
+    },
+    {
+      "type": "sum",
+      "dest_label": "Professional education",
+      "source_labels": [
+        "441500  costs  of professional spec",
+        "441600  costs of seminars and consu"
+      ]
     }
   ]
 }
+
+
