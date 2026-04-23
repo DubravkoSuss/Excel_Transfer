@@ -333,6 +333,41 @@ RollingResult RollingTransferService::executeChain(const QVector<RollingStep>& s
                 monthCells += res.cellsTransferred;
             }
 
+            // Step 4b: Compute cumulative columns for this month.
+            // Collect all dest rows that target MZLZ Consolidated base columns.
+            // runCumulativePassRT writes only the target month's cumulative column
+            // (e.g. IQ for February) using prevCum already in the file + the
+            // newly-written base column. Completely decoupled from Execute All.
+            {
+                static const QSet<QString> baseColSet = {
+                    "G","W","AM","BD","BW","CP","DJ","EF","FB","FY","GX","HW"
+                };
+                QSet<int> mzlzRows;
+                for (const RtTransfer& tm : transfers) {
+                    if (tm.entry.destSheet != "MZLZ Consolidated") continue;
+                    if (!baseColSet.contains(tm.entry.destColumn.toUpper())) continue;
+                    if (!tm.entry.rowMap.isEmpty()) {
+                        for (auto it = tm.entry.rowMap.constBegin();
+                             it != tm.entry.rowMap.constEnd(); ++it)
+                            mzlzRows.insert(it.key());
+                    } else {
+                        for (int r : tm.entry.destRows) mzlzRows.insert(r);
+                    }
+                    for (auto it = tm.entry.trafficPaxRowMap.constBegin();
+                         it != tm.entry.trafficPaxRowMap.constEnd(); ++it)
+                        mzlzRows.insert(it.key());
+                }
+                if (!mzlzRows.isEmpty()) {
+                    // Convert month name to 1-based int (January=1 … December=12)
+                    const int monthInt = MONTHS.indexOf(step.month) + 1;
+                    m_transferService->runCumulativePassRT(
+                        mzlzRows, "MZLZ Consolidated", step.year, destKey, monthInt);
+                } else {
+                    qWarning() << "[RT] No MZLZ rows found for cumulative pass —"
+                               << step.month << step.year;
+                }
+            }
+
             // Step 5: Save the workbook (same as Execute All)
             if (!m_handler->saveWorkbook(destKey, step.outputPath)) {
                 const QString err = QString("%1 %2: Failed to save workbook").arg(step.month).arg(step.year);

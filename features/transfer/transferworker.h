@@ -282,16 +282,85 @@ public:
                     }
                 }
 
+                // Build month→destKey map so runCumulativePassExecuteAll can read
+                // base and prevCum values from the correct per-month files.
+                QMap<QString, QString> allMonthDestKeys;
+                for (auto it2 = cumRows.constBegin(); it2 != cumRows.constEnd(); ++it2)
+                    allMonthDestKeys[it2.key().month] = it2.key().destKey;
+
+                // ── Check which months actually need a cumulative pass ──────
+                // runCumulativePassExecuteAll does nothing for January (targetIdx <= 0).
+                // Skip the entire save/reload/second-pass cycle for months that
+                // don't need it — the intermediate unload+reload was destroying
+                // dirty (unsaved) sheet data and causing the final save to write
+                // an empty replacement set (replacements=0), losing all transferred values.
+                static const QStringList monthNames = {
+                    "January", "February", "March", "April", "May", "June",
+                    "July", "August", "September", "October", "November", "December"
+                };
+
+                // Filter to only months that actually need cumulative (targetIdx > 0)
+                QMap<CumKey, QSet<int>> cumRowsNeedingPass;
                 for (auto it = cumRows.constBegin(); it != cumRows.constEnd(); ++it) {
-                    if (isStopRequested()) break;
-                    qDebug() << "[WORKER_CUM] Running Execute All cumulative for"
-                             << it.key().month << it.key().year;
-                    m_transferService->runCumulativePassExecuteAll(
-                        it.value(),
-                        "MZLZ Consolidated",
-                        it.key().year,
-                        it.key().destKey,
-                        it.key().month);
+                    int targetIdx = monthNames.indexOf(it.key().month);
+                    if (targetIdx > 0) {
+                        cumRowsNeedingPass.insert(it.key(), it.value());
+                    } else {
+                        qDebug() << "[WORKER_CUM] Skipping cumulative for"
+                                 << it.key().month << it.key().year
+                                 << "(no prior month to accumulate)";
+                    }
+                }
+
+                if (!cumRowsNeedingPass.isEmpty()) {
+                    // ── First cumulative pass ──────────────────────────────────
+                    for (auto it = cumRowsNeedingPass.constBegin(); it != cumRowsNeedingPass.constEnd(); ++it) {
+                        if (isStopRequested()) break;
+                        qDebug() << "[WORKER_CUM] Pass1 for" << it.key().month << it.key().year;
+                        m_transferService->runCumulativePassExecuteAll(
+                            it.value(),
+                            "MZLZ Consolidated",
+                            it.key().year,
+                            it.key().destKey,
+                            it.key().month,
+                            allMonthDestKeys,
+                            /*clearFirst=*/false);
+                    }
+
+                    // ── Intermediate save ──────────────────────────────────────
+                    // Flush the in-memory workbooks to disk so that when we reload
+                    // them for the second pass they contain the first-pass values.
+                    qDebug() << "[WORKER_CUM] Intermediate save for clearFirst pass";
+                    for (auto it = cumRowsNeedingPass.constBegin(); it != cumRowsNeedingPass.constEnd(); ++it) {
+                        if (isStopRequested()) break;
+                        const QString& dk = it.key().destKey;
+                        const QString& dp = destMap.value(dk);
+                        if (!dp.isEmpty()) {
+                            handler->saveWorkbook(dk, dp);
+                            // Reload so the in-memory cache reflects the saved state
+                            handler->unloadWorkbook(dk);
+                            QString loadError;
+                            handler->loadWorkbook(dp, dk, {}, &loadError);
+                        }
+                    }
+
+                    // ── Second cumulative pass (clearFirst=true) ───────────────
+                    // Zero rows 5-228 of the cum column, then rerun both passes.
+                    for (auto it = cumRowsNeedingPass.constBegin(); it != cumRowsNeedingPass.constEnd(); ++it) {
+                        if (isStopRequested()) break;
+                        qDebug() << "[WORKER_CUM] Pass2 (clearFirst) for"
+                                 << it.key().month << it.key().year;
+                        m_transferService->runCumulativePassExecuteAll(
+                            it.value(),
+                            "MZLZ Consolidated",
+                            it.key().year,
+                            it.key().destKey,
+                            it.key().month,
+                            allMonthDestKeys,
+                            /*clearFirst=*/true);
+                    }
+                } else {
+                    qDebug() << "[WORKER_CUM] No months need cumulative pass — skipping intermediate save/reload cycle";
                 }
             }
 

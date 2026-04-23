@@ -8,46 +8,46 @@
 \contentsline {subsection}{\numberline {4.1}Header Bar}{5}{subsection.4.1}%
 \contentsline {subsubsection}{\numberline {4.1.1}Understanding the Toolbar Buttons}{6}{subsubsection.4.1.1}%
 \contentsline {subsection}{\numberline {4.2}Year Cards}{6}{subsection.4.2}%
-\contentsline {subsubsection}{\numberline {4.2.1}How to Select Months}{7}{subsubsection.4.2.1}%
+\contentsline {subsubsection}{\numberline {4.2.1}How to Select Months}{8}{subsubsection.4.2.1}%
 \contentsline {subsubsection}{\numberline {4.2.2}Working with Multiple Years}{9}{subsubsection.4.2.2}%
-\contentsline {subsection}{\numberline {4.3}Log Panel}{9}{subsection.4.3}%
-\contentsline {section}{\numberline {5}Loading Files}{9}{section.5}%
-\contentsline {subsection}{\numberline {5.1}Selecting Periods}{10}{subsection.5.1}%
-\contentsline {section}{\numberline {6}Mapping Cards}{10}{section.6}%
-\contentsline {subsection}{\numberline {6.1}What is a Mapping Card?}{10}{subsection.6.1}%
-\contentsline {subsection}{\numberline {6.2}Mapping Card Buttons}{11}{subsection.6.2}%
-\contentsline {subsubsection}{\numberline {6.2.1}Understanding Mapping Cards}{12}{subsubsection.6.2.1}%
-\contentsline {subsubsection}{\numberline {6.2.2}Working with Mapping Card Controls}{13}{subsubsection.6.2.2}%
-\contentsline {subsection}{\numberline {6.3}Ignore Rows Dialog}{14}{subsection.6.3}%
-\contentsline {subsubsection}{\numberline {6.3.1}Using the Ignore Rows Dialog}{16}{subsubsection.6.3.1}%
-\contentsline {section}{\numberline {7}Execute All Transfers}{17}{section.7}%
-\contentsline {subsubsection}{\numberline {7.0.1}Complete Workflow: From Loading to Execution}{18}{subsubsection.7.0.1}%
-\contentsline {subsection}{\numberline {7.1}Pause and Stop}{19}{subsection.7.1}%
-\contentsline {section}{\numberline {8}Rolling Transfer (RT)}{19}{section.8}%
-\contentsline {subsection}{\numberline {8.1}What is Rolling Transfer?}{19}{subsection.8.1}%
-\contentsline {subsection}{\numberline {8.2}How RT Works}{19}{subsection.8.2}%
-\contentsline {section}{\numberline {9}Fill All Months}{20}{section.9}%
-\contentsline {subsection}{\numberline {9.1}What is Fill All Months?}{20}{subsection.9.1}%
-\contentsline {subsection}{\numberline {9.2}How it Works}{20}{subsection.9.2}%
-\contentsline {section}{\numberline {10}Parallel Transfer (Backend)}{21}{section.10}%
-\contentsline {subsection}{\numberline {10.1}Overview}{21}{subsection.10.1}%
-\contentsline {subsection}{\numberline {10.2}Key Design Principles}{21}{subsection.10.2}%
-\contentsline {subsection}{\numberline {10.3}Rolling Validation Rules}{22}{subsection.10.3}%
-\contentsline {section}{\numberline {11}Create Month File}{22}{section.11}%
-\contentsline {subsection}{\numberline {11.1}How it Works}{22}{subsection.11.1}%
-\contentsline {section}{\numberline {12}Individual Cell Selector}{23}{section.12}%
-\contentsline {section}{\numberline {13}Data Flow Reference}{24}{section.13}%
-\contentsline {subsection}{\numberline {13.1}Traffic Mott YTD Flow}{25}{subsection.13.1}%
-\contentsline {subsection}{\numberline {13.2}Transfer Execution Order}{26}{subsection.13.2}%
-\contentsline {section}{\numberline {14}Troubleshooting}{27}{section.14}%
-\contentsline {subsection}{\numberline {14.1}``not a zip file'' Error}{27}{subsection.14.1}%
-\contentsline {subsection}{\numberline {14.2}0 Cells Transferred}{27}{subsection.14.2}%
-\contentsline {subsection}{\numberline {14.3}Stack Overflow / Crash on Execute All}{27}{subsection.14.3}%
-\contentsline {subsection}{\numberline {14.4}Fill All Months Writes to Wrong Folder}{27}{subsection.14.4}%
-\contentsline {subsection}{\numberline {14.5}Parallel Transfer Not Visible in UI}{27}{subsection.14.5}%
-\contentsline {section}{\numberline {15}Appendix}{28}{section.15}%
-\contentsline {subsection}{\numberline {15.1}File Naming Convention}{28}{subsection.15.1}%
-\contentsline {subsection}{\numberline {15.2}JSON Mapping Files}{28}{subsection.15.2}%
-\contentsline {subsection}{\numberline {15.3}Technical Architecture}{29}{subsection.15.3}%
-\contentsline {subsection}{\numberline {15.4}Performance Characteristics}{29}{subsection.15.4}%
-\contentsline {subsection}{\numberline {15.5}Hybrid Transfer Tab}{29}{subsection.15.5}%
+\contentsline {subsection}{\numberline {4.3}Log Panel}{11}{subsection.4.3}%
+\contentsline {section}{\numberline {5}Loading Files}{11}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Selecting Periods}{11}{subsection.5.1}%
+\contentsline {section}{\numberline {6}Mapping Cards}{11}{section.6}%
+\contentsline {subsection}{\numberline {6.1}What is a Mapping Card?}{11}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Mapping Card Buttons}{12}{subsection.6.2}%
+\contentsline {subsubsection}{\numberline {6.2.1}Understanding Mapping Cards}{13}{subsubsection.6.2.1}%
+\contentsline {subsubsection}{\numberline {6.2.2}Working with Mapping Card Controls}{15}{subsubsection.6.2.2}%
+\contentsline {subsection}{\numberline {6.3}Ignore Rows Dialog}{16}{subsection.6.3}%
+\contentsline {subsubsection}{\numberline {6.3.1}Using the Ignore Rows Dialog}{18}{subsubsection.6.3.1}%
+\contentsline {section}{\numberline {7}Execute All Transfers}{19}{section.7}%
+\contentsline {subsubsection}{\numberline {7.0.1}Complete Workflow: From Loading to Execution}{20}{subsubsection.7.0.1}%
+\contentsline {subsection}{\numberline {7.1}Pause and Stop}{21}{subsection.7.1}%
+\contentsline {section}{\numberline {8}Rolling Transfer (RT)}{21}{section.8}%
+\contentsline {subsection}{\numberline {8.1}What is Rolling Transfer?}{21}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}How RT Works}{21}{subsection.8.2}%
+\contentsline {section}{\numberline {9}Fill All Months}{22}{section.9}%
+\contentsline {subsection}{\numberline {9.1}What is Fill All Months?}{22}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}How it Works}{23}{subsection.9.2}%
+\contentsline {section}{\numberline {10}Parallel Transfer (Backend)}{23}{section.10}%
+\contentsline {subsection}{\numberline {10.1}Overview}{23}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}Key Design Principles}{23}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}Rolling Validation Rules}{24}{subsection.10.3}%
+\contentsline {section}{\numberline {11}Create Month File}{24}{section.11}%
+\contentsline {subsection}{\numberline {11.1}How it Works}{24}{subsection.11.1}%
+\contentsline {section}{\numberline {12}Individual Cell Selector}{25}{section.12}%
+\contentsline {section}{\numberline {13}Data Flow Reference}{26}{section.13}%
+\contentsline {subsection}{\numberline {13.1}Traffic Mott YTD Flow}{27}{subsection.13.1}%
+\contentsline {subsection}{\numberline {13.2}Transfer Execution Order}{28}{subsection.13.2}%
+\contentsline {section}{\numberline {14}Troubleshooting}{29}{section.14}%
+\contentsline {subsection}{\numberline {14.1}``not a zip file'' Error}{29}{subsection.14.1}%
+\contentsline {subsection}{\numberline {14.2}0 Cells Transferred}{29}{subsection.14.2}%
+\contentsline {subsection}{\numberline {14.3}Stack Overflow / Crash on Execute All}{29}{subsection.14.3}%
+\contentsline {subsection}{\numberline {14.4}Fill All Months Writes to Wrong Folder}{29}{subsection.14.4}%
+\contentsline {subsection}{\numberline {14.5}Parallel Transfer Not Visible in UI}{29}{subsection.14.5}%
+\contentsline {section}{\numberline {15}Appendix}{30}{section.15}%
+\contentsline {subsection}{\numberline {15.1}File Naming Convention}{30}{subsection.15.1}%
+\contentsline {subsection}{\numberline {15.2}JSON Mapping Files}{30}{subsection.15.2}%
+\contentsline {subsection}{\numberline {15.3}Technical Architecture}{31}{subsection.15.3}%
+\contentsline {subsection}{\numberline {15.4}Performance Characteristics}{31}{subsection.15.4}%
+\contentsline {subsection}{\numberline {15.5}Hybrid Transfer Tab}{31}{subsection.15.5}%

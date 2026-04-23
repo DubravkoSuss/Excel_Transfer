@@ -319,6 +319,7 @@ private:
     bool             m_fillAllRunning = false;
     QDockWidget* m_statusDock = nullptr;
     QTextEdit* m_statusText = nullptr;
+    QPushButton* m_btnUpdateMappings = nullptr;
     QPushButton* m_btnToggleLog = nullptr;
     bool m_createFilesMode = false;
     int  m_createFilesYear = 0;

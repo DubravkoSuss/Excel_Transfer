@@ -10,7 +10,7 @@ set(CMAKE_AUTOUIC ON)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Concurrent AxContainer)
 find_package(Qt6 REQUIRED COMPONENTS CorePrivate)
 
-add_executable(ExcelTransfer
+add_executable(ExcelTransfer WIN32
         ui/main.cpp
         ui/mainwindow.cpp
         ui/mainwindow.h
@@ -30,6 +30,8 @@ add_executable(ExcelTransfer
         ui/yearrollovertab.h
         features/search/excelsearchservice.cpp
         features/search/excelsearchservice.h
+        features/search/searchworker.cpp
+        features/search/searchworker.h
         features/rollover/rolloverworker.cpp
         features/rollover/rolloverworker.h
         services/excelhandler.cpp
@@ -72,6 +74,8 @@ add_executable(ExcelTransfer
         features/mappings/rowmapvalidatordialog.cpp
         features/mappings/rowmapvalidatordialog.h
         features/transfer/transferworker.h
+        features/transfer/mappingupdater.h
+        features/transfer/mappingupdater.cpp
         features/transfer/loadworker.cpp
         features/transfer/loadworker.h
         features/transfer/rollingworker.h
@@ -100,4 +104,17 @@ target_link_libraries(ExcelTransfer PRIVATE
 # Link Windows DWM API for title bar customization
 if(WIN32)
     target_link_libraries(ExcelTransfer PRIVATE dwmapi)
+    
+    # Set application icon (if you have app_icon.rc)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app_icon.rc")
+        target_sources(ExcelTransfer PRIVATE app_icon.rc)
+    endif()
+    
+    # Hide console window for release builds
+    if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        set_target_properties(ExcelTransfer PROPERTIES
+            WIN32_EXECUTABLE TRUE
+            LINK_FLAGS "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
+        )
+    endif()
 endif()

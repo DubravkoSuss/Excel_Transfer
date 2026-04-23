@@ -1,6 +1,6 @@
 {
   "source_sheet": "Sheet1",
-  "dest_sheet": "TRAFFIC mott 2025",
+  "dest_sheet": "TRAFFIC mott {year}",
   "rowMap": {
     "16": 14,
     "17": 15, "18": 16, "23": 21, "24": 22, "25": 23,

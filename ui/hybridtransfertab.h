@@ -19,6 +19,7 @@
 #include <QSplitter>
 #include <QScrollArea>
 #include "../features/transfer/hybridtransferconfig.h"
+#include "../features/transfer/mappingupdater.h"
 #include "../core/mappingcontroller.h"
 #include "../core/mappingmodel.h"
 
@@ -38,6 +39,7 @@ public slots:
     void onPhaseFinished(const QString& phaseName, bool success);
     void onProgressUpdate(int percent, const QString& message);
     void onAllFinished(bool success, const QString& summary);
+    void onUpdateMappings();
 
 private slots:
     void onAddPeriod();
@@ -97,6 +99,7 @@ private:
     QLabel* m_phaseStatusLabel;  // Shows current phase execution
     QProgressBar* m_progressBar;
     QPushButton* m_executeBtn;
+    QPushButton* m_updateMappingsBtn;
 
     // Internal config built from UI
     HybridTransferConfig m_config;

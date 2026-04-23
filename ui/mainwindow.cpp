@@ -247,16 +247,11 @@ void MainWindow::customizeWindowsTitleBar()
 void MainWindow::setupUI()
 {
     setWindowTitle("Excel Transfer Tool - Monthly Auto");
-    resize(1300, 950);
+    resize(1450, 1150);
     setMinimumSize(950, 620);
 
-    QScrollArea* mainScroll = new QScrollArea();
-    mainScroll->setWidgetResizable(true);
-    mainScroll->setFrameShape(QFrame::NoFrame);
-
     m_centralWidget = new QWidget();
-    mainScroll->setWidget(m_centralWidget);
-    setCentralWidget(mainScroll);
+    setCentralWidget(m_centralWidget);
 
     m_mainLayout = new QVBoxLayout(m_centralWidget);
     m_mainLayout->setContentsMargins(16, 16, 16, 16);
@@ -570,6 +565,28 @@ void MainWindow::createHeader()
     btnReset->setToolTip("Reset everything: clears cached files, mapping cards, and period rows");
     connect(btnReset, &QPushButton::clicked, this, &MainWindow::onResetAll);
     headerLayout->addWidget(btnReset);
+
+    // Update Row Mappings button — scans Excel files by label, rewrites JSON rowMaps
+    m_btnUpdateMappings = new QPushButton("Update Mappings");
+    m_btnUpdateMappings->setStyleSheet(
+        "QPushButton {"
+        "  background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #14B8A6,stop:1 #0D9488);"
+        "  color: white; font-weight: 600; font-size: 13px;"
+        "  padding: 10px 18px; border-radius: 6px; border: none; }"
+        "QPushButton:hover { background: #0D9488; }"
+        "QPushButton:pressed { background: #0F766E; }"
+        "QPushButton:disabled { background: #E5E7EB; color: #9CA3AF; }");
+    m_btnUpdateMappings->setToolTip(
+        "Scan source + destination Excel files by text label in column B,\n"
+        "find current row numbers, rewrite JSON mapping files.\n\n"
+        "First run: bootstraps label_definitions.json from current mappings.\n"
+        "Subsequent: uses saved labels to find rows in new files.");
+    connect(m_btnUpdateMappings, &QPushButton::clicked, this, [this]() {
+        if (m_hybridTransferTab) {
+            m_hybridTransferTab->onUpdateMappings();
+        }
+    });
+    headerLayout->addWidget(m_btnUpdateMappings);
 
     // Log toggle button — shows/hides the status log side panel
     m_btnToggleLog = new QPushButton("Log");
@@ -3383,7 +3400,11 @@ int MainWindow::handleSapYtdTransfer(const MappingEntry& entry, int year, const 
         if (!hasValue) {
             continue;
         }
-        total /= 1000.0;
+        // Headcount rows 12, 13, 16 — never divide by 1000
+        const bool isHeadcountRow = (destRow == 12 || destRow == 13 || destRow == 16);
+        if (!isHeadcountRow) {
+            total /= 1000.0;
+        }
         m_excelHandler->setCellValue(destKey, destSheet, destRow,
                                      m_excelHandler->letterToColumn(destColumn), total);
         handled++;
@@ -3858,7 +3879,39 @@ QString MainWindow::findSapFile(const QString& monthFolder, const QString& mm, i
 
 QString MainWindow::findSapYtdFile(const QString& monthFolder, const QString& mm, int year)
 {
-    // e.g. L:/.../2025/05/SAP export monthly/YTD_05_2025.xlsm
+    // Search multiple possible directories and file patterns
+    // SAP YTD files may live in "SAP YTD" or "SAP export monthly" subfolders
+    // and may be .xlsm or .xlsx with various naming conventions.
+    QStringList searchDirs = {
+        QString("%1/SAP YTD").arg(monthFolder),
+        QString("%1/SAP export monthly").arg(monthFolder),
+        monthFolder   // sometimes directly in the month folder
+    };
+
+    for (const QString& dirPath : searchDirs) {
+        QDir dir(dirPath);
+        if (!dir.exists()) continue;
+
+        // Try exact name first: YTD_MM_YYYY.xlsm / .xlsx
+        for (const QString& ext : {".xlsm", ".xlsx", ".xls"}) {
+            QString exact = QString("YTD_%1_%2%3").arg(mm).arg(year).arg(ext);
+            if (dir.exists(exact))
+                return dir.absoluteFilePath(exact);
+        }
+
+        // Try wildcard patterns: YTD_*, *YTD*
+        QStringList files = dir.entryList(
+            QStringList() << QString("YTD_%1_%2*").arg(mm).arg(year)
+                          << QString("YTD_%1*").arg(mm)
+                          << "YTD_*"
+                          << "*YTD*",
+            QDir::Files);
+        if (!files.isEmpty())
+            return dir.absoluteFilePath(files.first());
+    }
+
+    // Fallback: return the most likely path (even if it doesn't exist yet)
+    // so the scan can show what was expected
     QString sapFolder = QString("%1/SAP export monthly").arg(monthFolder);
     QString fileName = QString("YTD_%1_%2.xlsm").arg(mm).arg(year);
     return QString("%1/%2").arg(sapFolder, fileName);
@@ -4119,7 +4172,8 @@ void MainWindow::onIndividualTransfer(const IndividualTransferPanel::TransferCon
                 QVariant value = m_excelHandler->getCellValue(srcKey, srcSheet, srcRow, srcCol);
                 
                 if (value.isValid()) {
-                    if (config.divideBy1000 && value.canConvert<double>()) {
+                    const bool isHeadcountDestRow = (destRow == 12 || destRow == 13 || destRow == 16);
+                    if (config.divideBy1000 && !isHeadcountDestRow && value.canConvert<double>()) {
                         double numValue = value.toDouble() / 1000.0;
                         value = numValue;
                     }
@@ -4144,7 +4198,9 @@ void MainWindow::onIndividualTransfer(const IndividualTransferPanel::TransferCon
                 );
                 
                 if (value.isValid()) {
-                    if (config.divideBy1000 && value.canConvert<double>()) {
+                    const int actualDestRow = config.destRow + i;
+                    const bool isHeadcountDestRow = (actualDestRow == 12 || actualDestRow == 13 || actualDestRow == 16);
+                    if (config.divideBy1000 && !isHeadcountDestRow && value.canConvert<double>()) {
                         double numValue = value.toDouble() / 1000.0;
                         value = numValue;
                     }

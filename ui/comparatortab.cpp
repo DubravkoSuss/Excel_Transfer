@@ -13,7 +13,126 @@
 #include <QMessageBox>
 #include <QApplication>
 #include <QGridLayout>
+#include <QRegularExpression>
 #include <cmath>
+
+// ── Inline formula evaluator (SUM and arithmetic within same sheet) ──────────
+// Returns the computed value and sets *ok=true when the formula was understood.
+// On failure (*ok=false) callers should fall back to the cached <v> value.
+static double evalFormula(ExcelHandler* handler, const QString& key,
+                          const QString& sheet, const QString& formula,
+                          bool* ok = nullptr)
+{
+    if (!handler || formula.isEmpty()) { if (ok) *ok = false; return 0.0; }
+    QString f = formula.trimmed();
+    if (f.startsWith('=')) f = f.mid(1);
+    f.remove('$');
+    if (f.startsWith('+')) f = f.mid(1);
+    f = f.trimmed();
+    if (f.isEmpty() || f.contains('!')) { if (ok) *ok = false; return 0.0; }
+
+    // Reject non-SUM functions
+    static const QRegularExpression nonSumFuncRx(
+        "(?!SUM\\b)[A-Z_][A-Z0-9_.]*\\s*\\(",
+        QRegularExpression::CaseInsensitiveOption);
+    if (nonSumFuncRx.match(f).hasMatch()) { if (ok) *ok = false; return 0.0; }
+
+    // Strip trailing /constant
+    double divisor = 1.0;
+    static const QRegularExpression divRx("/\\s*(-?[0-9.]+)\\s*$");
+    auto divMatch = divRx.match(f);
+    if (divMatch.hasMatch()) {
+        divisor = divMatch.captured(1).toDouble();
+        if (divisor == 0) divisor = 1.0;
+        f = f.left(divMatch.capturedStart()).trimmed();
+    }
+
+    static const QRegularExpression cellRefRx("^([A-Z]+)(\\d+)$", QRegularExpression::CaseInsensitiveOption);
+    auto readCell = [&](const QString& ref, bool* cellOk) -> double {
+        auto m = cellRefRx.match(ref.trimmed());
+        if (!m.hasMatch()) { if (cellOk) *cellOk = false; return 0.0; }
+        if (cellOk) *cellOk = true;
+        QVariant v = handler->getCellValue(key, sheet, m.captured(2).toInt(),
+                                           handler->letterToColumn(m.captured(1)));
+        return v.canConvert<double>() ? v.toDouble() : 0.0;
+    };
+
+    auto sumRange = [&](const QString& rangeStr, bool* rangeOk) -> double {
+        static const QRegularExpression rangeRx("^([A-Z]+)(\\d+):([A-Z]+)(\\d+)$",
+                                                QRegularExpression::CaseInsensitiveOption);
+        auto m = rangeRx.match(rangeStr.trimmed());
+        if (!m.hasMatch()) return readCell(rangeStr, rangeOk);
+        if (rangeOk) *rangeOk = true;
+        QString c1 = m.captured(1).toUpper(), c2 = m.captured(3).toUpper();
+        int r1 = m.captured(2).toInt(), r2 = m.captured(4).toInt();
+        double total = 0.0;
+        if (c1 == c2) {
+            int c = handler->letterToColumn(c1);
+            for (int r = qMin(r1,r2); r <= qMax(r1,r2); ++r) {
+                QVariant v = handler->getCellValue(key, sheet, r, c);
+                if (v.canConvert<double>()) total += v.toDouble();
+            }
+        } else if (r1 == r2) {
+            int col1 = handler->letterToColumn(c1), col2 = handler->letterToColumn(c2);
+            for (int c = qMin(col1,col2); c <= qMax(col1,col2); ++c) {
+                QVariant v = handler->getCellValue(key, sheet, r1, c);
+                if (v.canConvert<double>()) total += v.toDouble();
+            }
+        }
+        return total;
+    };
+
+    static const QRegularExpression sumRx("^SUM\\((.+)\\)$", QRegularExpression::CaseInsensitiveOption);
+    auto sumMatch = sumRx.match(f);
+    double result = 0.0;
+
+    if (sumMatch.hasMatch()) {
+        for (const QString& part : sumMatch.captured(1).split(',')) {
+            bool partOk = false;
+            result += sumRange(part.trimmed(), &partOk);
+            if (!partOk) { if (ok) *ok = false; return 0.0; }
+        }
+    } else {
+        // Arithmetic: cell refs / numbers with +/-
+        double cur = 0.0; int sign = 1; int i = 0; QString tok;
+        while (i <= f.size()) {
+            QChar ch = (i < f.size()) ? f[i] : QChar('+');
+            if (ch == '+' || ch == '-') {
+                tok = tok.trimmed();
+                if (!tok.isEmpty()) {
+                    bool numOk = false;
+                    double num = tok.toDouble(&numOk);
+                    if (numOk) { cur += sign * num; }
+                    else {
+                        bool cellOk = false;
+                        double v = readCell(tok, &cellOk);
+                        if (!cellOk) { if (ok) *ok = false; return 0.0; }
+                        cur += sign * v;
+                    }
+                }
+                sign = (ch == '+') ? 1 : -1;
+                tok.clear();
+            } else { tok += ch; }
+            ++i;
+        }
+        result = cur;
+    }
+    if (ok) *ok = true;
+    return (divisor != 1.0) ? (result / divisor) : result;
+}
+
+// Helper: get the effective numeric value of a cell.
+// IMPORTANT: We always read the plain cached <v> value, NOT re-evaluate formulas.
+// Re-evaluating formulas causes false mismatches when working and compare files
+// have different formula ranges for the same logical cell (e.g. =SUM(G5:CP5) vs
+// =SUM(G5:BW5) because compare file was copied from May and formula wasn't updated).
+// Our transfer always writes plain values via setCellValue, so <v> is authoritative.
+static double effectiveValue(ExcelHandler* handler, const QString& key,
+                             const QString& sheet, int row, int col)
+{
+    QVariant v = handler->getCellValue(key, sheet, row, col);
+    return v.canConvert<double>() ? v.toDouble() : 0.0;
+}
 
 // ── Static data ──
 const QStringList ComparatorTab::s_monthNames = {
@@ -66,14 +185,15 @@ void ComparatorTab::setupUI()
     // ════════════════════════════════════════════
     QFrame* sidebar = new QFrame();
     sidebar->setMinimumWidth(200);
-    sidebar->setStyleSheet("QFrame { background: #F3F4F6; }");
+    sidebar->setMaximumWidth(420);
+    sidebar->setStyleSheet("QFrame { background: #F3F4F6; border: none; }");
     QVBoxLayout* sidebarLayout = new QVBoxLayout(sidebar);
     sidebarLayout->setContentsMargins(10, 12, 10, 12);
     sidebarLayout->setSpacing(6);
 
     QHBoxLayout* cardsTitleRow = new QHBoxLayout();
     QLabel* cardsTitle = new QLabel("Mapping Cards");
-    cardsTitle->setStyleSheet("font-weight: 700; font-size: 14px; color: #1F2937;");
+    cardsTitle->setStyleSheet("font-weight: 700; font-size: 14px; color: #1F2937; background: transparent;");
     cardsTitleRow->addWidget(cardsTitle);
     cardsTitleRow->addStretch();
 
@@ -95,12 +215,8 @@ void ComparatorTab::setupUI()
     cardsTitleRow->addWidget(btnDeselectAll);
     sidebarLayout->addLayout(cardsTitleRow);
 
-    connect(btnSelectAll, &QPushButton::clicked, this, [this]() {
-        if (m_mappingController) m_mappingController->setAllChecked(true);
-    });
-    connect(btnDeselectAll, &QPushButton::clicked, this, [this]() {
-        if (m_mappingController) m_mappingController->setAllChecked(false);
-    });
+    connect(btnSelectAll,   &QPushButton::clicked, this, [this]() { if (m_mappingController) m_mappingController->setAllChecked(true);  });
+    connect(btnDeselectAll, &QPushButton::clicked, this, [this]() { if (m_mappingController) m_mappingController->setAllChecked(false); });
 
     QScrollArea* cardsScroll = new QScrollArea();
     cardsScroll->setWidgetResizable(true);
@@ -134,183 +250,217 @@ void ComparatorTab::setupUI()
     m_splitter->addWidget(sidebar);
 
     // ════════════════════════════════════════════
-    // RIGHT PANEL
+    // RIGHT PANEL — scrollable content
     // ════════════════════════════════════════════
     QWidget* rightPanel = new QWidget();
     rightPanel->setMinimumWidth(500);
-    m_mainRightLayout = new QVBoxLayout(rightPanel);
-    m_mainRightLayout->setContentsMargins(16, 16, 16, 16);
-    m_mainRightLayout->setSpacing(12);
+    rightPanel->setStyleSheet("QWidget { background: white; }");
 
-    // Title
+    QScrollArea* rightScroll = new QScrollArea();
+    rightScroll->setWidgetResizable(true);
+    rightScroll->setStyleSheet("QScrollArea { border: none; background: white; }");
+    rightScroll->setWidget(rightPanel);
+
+    m_mainRightLayout = new QVBoxLayout(rightPanel);
+    m_mainRightLayout->setContentsMargins(24, 20, 24, 20);
+    m_mainRightLayout->setSpacing(0);
+
+    // ── Header ──
     QLabel* titleLabel = new QLabel("Comparator");
     titleLabel->setStyleSheet(
-        "font-weight: 700; font-size: 18px; color: #1F2937;"
-        "letter-spacing: -0.3px; margin-bottom: 4px;"
+        "font-weight: 700; font-size: 20px; color: #111827; background: transparent;"
+        "letter-spacing: -0.3px;"
     );
     m_mainRightLayout->addWidget(titleLabel);
+    m_mainRightLayout->addSpacing(4);
 
     QLabel* descLabel = new QLabel(
         "Compare working files with _compare files across multiple months. "
         "Select year, check months, adjust precision, then Load & Compare."
     );
-    descLabel->setStyleSheet("color: #6B7280; font-size: 13px; margin-bottom: 8px;");
+    descLabel->setStyleSheet("color: #6B7280; font-size: 13px; background: transparent;");
     descLabel->setWordWrap(true);
     m_mainRightLayout->addWidget(descLabel);
+    m_mainRightLayout->addSpacing(16);
 
-    // ── Selection card ──
-    QFrame* selCard = new QFrame();
-    selCard->setStyleSheet(
-        "QFrame {"
-        "  background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "    stop:0 #FAFBFC, stop:1 #F5F7FA);"
-        "  border-radius: 12px; padding: 16px;"
-        "}"
+    // ── Settings panel ──
+    QFrame* settingsPanel = new QFrame();
+    settingsPanel->setStyleSheet(
+        "QFrame { background: #F9FAFB; border: 1px solid #E5E7EB;"
+        " border-radius: 10px; }"
     );
-    QVBoxLayout* cardLayout = new QVBoxLayout(selCard);
-    cardLayout->setSpacing(10);
+    QVBoxLayout* settingsLayout = new QVBoxLayout(settingsPanel);
+    settingsLayout->setContentsMargins(16, 14, 16, 14);
+    settingsLayout->setSpacing(12);
 
-    // Year row
-    QHBoxLayout* yearRow = new QHBoxLayout();
-    yearRow->setSpacing(12);
+    // Row 1: Year + Precision
+    QHBoxLayout* row1 = new QHBoxLayout();
+    row1->setSpacing(8);
+
     QLabel* yearLabel = new QLabel("Year:");
-    yearLabel->setStyleSheet("font-weight: 600; color: #374151;");
-    yearRow->addWidget(yearLabel);
+    yearLabel->setStyleSheet("font-weight: 600; font-size: 13px; color: #374151; background: transparent; min-width: 32px;");
+    row1->addWidget(yearLabel);
 
     m_yearCombo = new QComboBox();
+    m_yearCombo->setFixedWidth(80);
     m_yearCombo->setStyleSheet(comboStyle());
     for (int y = 2010; y <= 2043; y++)
         m_yearCombo->addItem(QString::number(y));
     m_yearCombo->setCurrentText(QString::number(QDate::currentDate().year()));
-    yearRow->addWidget(m_yearCombo);
+    row1->addWidget(m_yearCombo);
 
-    // Precision
+    row1->addSpacing(16);
+
     QLabel* precLabel = new QLabel("Precision:");
-    precLabel->setStyleSheet("font-weight: 600; color: #374151;");
-    yearRow->addWidget(precLabel);
+    precLabel->setStyleSheet("font-weight: 600; font-size: 13px; color: #374151; background: transparent;");
+    row1->addWidget(precLabel);
 
     m_precisionCombo = new QComboBox();
+    m_precisionCombo->setFixedWidth(120);
     m_precisionCombo->setStyleSheet(comboStyle());
     m_precisionCombo->addItems({"Whole number", "1 decimal", "2 decimals", "3 decimals", "4 decimals", "Exact"});
-    m_precisionCombo->setCurrentIndex(2); // default: 2 decimals
-    yearRow->addWidget(m_precisionCombo);
+    m_precisionCombo->setCurrentIndex(2);
+    row1->addWidget(m_precisionCombo);
 
-    yearRow->addStretch();
-    cardLayout->addLayout(yearRow);
+    row1->addStretch();
+    settingsLayout->addLayout(row1);
 
-    // Month checkboxes — 2 rows of 6
+    // Divider
+    QFrame* div1 = new QFrame();
+    div1->setFrameShape(QFrame::HLine);
+    div1->setStyleSheet("background: #E5E7EB; border: none; max-height: 1px;");
+    settingsLayout->addWidget(div1);
+
+    // Row 2: Month label + All/None
+    QHBoxLayout* monthTitleRow = new QHBoxLayout();
     QLabel* monthsTitle = new QLabel("Months:");
-    monthsTitle->setStyleSheet("font-weight: 600; color: #374151;");
-    cardLayout->addWidget(monthsTitle);
+    monthsTitle->setStyleSheet("font-weight: 600; font-size: 13px; color: #374151; background: transparent;");
+    monthTitleRow->addWidget(monthsTitle);
+    monthTitleRow->addStretch();
 
-    QGridLayout* monthGrid = new QGridLayout();
-    monthGrid->setSpacing(6);
-    for (int i = 0; i < 12; ++i) {
-        m_monthChecks[i] = new QCheckBox(s_monthNames[i]);
-        m_monthChecks[i]->setStyleSheet(
-            "QCheckBox { font-size: 12px; color: #374151; }"
-            "QCheckBox::indicator { width: 16px; height: 16px; }"
-        );
-        monthGrid->addWidget(m_monthChecks[i], i / 6, i % 6);
-    }
-
-    // Quick-select buttons
-    QHBoxLayout* quickRow = new QHBoxLayout();
     QPushButton* btnAllMonths = new QPushButton("All");
-    btnAllMonths->setFixedHeight(22);
+    btnAllMonths->setFixedSize(48, 24);
     btnAllMonths->setStyleSheet(
         "QPushButton { background: #3B82F6; color: white; border-radius: 4px;"
-        "  padding: 1px 10px; font-size: 11px; font-weight: 600; border: none; }"
+        "  font-size: 11px; font-weight: 600; border: none; }"
         "QPushButton:hover { background: #2563EB; }"
     );
     QPushButton* btnNoMonths = new QPushButton("None");
-    btnNoMonths->setFixedHeight(22);
+    btnNoMonths->setFixedSize(48, 24);
     btnNoMonths->setStyleSheet(
         "QPushButton { background: #6B7280; color: white; border-radius: 4px;"
-        "  padding: 1px 10px; font-size: 11px; font-weight: 600; border: none; }"
+        "  font-size: 11px; font-weight: 600; border: none; }"
         "QPushButton:hover { background: #4B5563; }"
     );
-    quickRow->addWidget(btnAllMonths);
-    quickRow->addWidget(btnNoMonths);
-    quickRow->addStretch();
+    monthTitleRow->addWidget(btnAllMonths);
+    monthTitleRow->addWidget(btnNoMonths);
+    settingsLayout->addLayout(monthTitleRow);
 
-    connect(btnAllMonths, &QPushButton::clicked, this, [this]() {
-        for (int i = 0; i < 12; ++i) m_monthChecks[i]->setChecked(true);
-    });
-    connect(btnNoMonths, &QPushButton::clicked, this, [this]() {
-        for (int i = 0; i < 12; ++i) m_monthChecks[i]->setChecked(false);
-    });
+    connect(btnAllMonths, &QPushButton::clicked, this, [this]() { for (int i=0;i<12;++i) m_monthChecks[i]->setChecked(true);  });
+    connect(btnNoMonths,  &QPushButton::clicked, this, [this]() { for (int i=0;i<12;++i) m_monthChecks[i]->setChecked(false); });
 
-    cardLayout->addLayout(monthGrid);
-    cardLayout->addLayout(quickRow);
+    // Month checkboxes — 2 rows × 6
+    QGridLayout* monthGrid = new QGridLayout();
+    monthGrid->setHorizontalSpacing(12);
+    monthGrid->setVerticalSpacing(8);
+    for (int i = 0; i < 12; ++i) {
+        m_monthChecks[i] = new QCheckBox(s_monthNames[i]);
+        m_monthChecks[i]->setStyleSheet(
+            "QCheckBox { font-size: 13px; color: #374151; background: transparent; spacing: 6px; }"
+            "QCheckBox::indicator { width: 15px; height: 15px; border-radius: 3px;"
+            "  border: 1px solid #D1D5DB; background: white; }"
+            "QCheckBox::indicator:checked { background: #3B82F6; border-color: #3B82F6;"
+            "  image: url(none); }"
+        );
+        monthGrid->addWidget(m_monthChecks[i], i / 6, i % 6);
+    }
+    settingsLayout->addLayout(monthGrid);
 
-    // Buttons row: Load + Compare
+    // Divider
+    QFrame* div2 = new QFrame();
+    div2->setFrameShape(QFrame::HLine);
+    div2->setStyleSheet("background: #E5E7EB; border: none; max-height: 1px;");
+    settingsLayout->addWidget(div2);
+
+    // Row 3: Action buttons
     QHBoxLayout* btnRow = new QHBoxLayout();
-    m_loadBtn = new QPushButton("⚙ Load");
+    btnRow->setSpacing(10);
+
+    m_loadBtn = new QPushButton("⚙  Load");
+    m_loadBtn->setFixedHeight(36);
+    m_loadBtn->setMinimumWidth(110);
+    m_loadBtn->setCursor(Qt::PointingHandCursor);
     m_loadBtn->setStyleSheet(
-        "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "    stop:0 #8B5CF6, stop:1 #7C3AED); color: white; font-weight: 600;"
-        "  padding: 8px 20px; border-radius: 6px; font-size: 13px; border: none; }"
-        "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "    stop:0 #7C3AED, stop:1 #6D28D9); }"
-        "QPushButton:pressed { background: #6D28D9; }"
+        "QPushButton { background: #7C3AED; color: white; font-weight: 600;"
+        "  padding: 0 20px; border-radius: 6px; font-size: 13px; border: none; }"
+        "QPushButton:hover { background: #6D28D9; }"
+        "QPushButton:pressed { background: #5B21B6; }"
     );
     btnRow->addWidget(m_loadBtn);
 
-    m_compareBtn = new QPushButton("▶ Compare");
+    m_compareBtn = new QPushButton("▶  Compare");
     m_compareBtn->setEnabled(false);
+    m_compareBtn->setFixedHeight(36);
+    m_compareBtn->setMinimumWidth(120);
+    m_compareBtn->setCursor(Qt::PointingHandCursor);
     m_compareBtn->setStyleSheet(
-        "QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "    stop:0 #059669, stop:1 #047857); color: white; font-weight: 600;"
-        "  padding: 8px 20px; border-radius: 6px; font-size: 13px; border: none; }"
-        "QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "    stop:0 #047857, stop:1 #065F46); }"
-        "QPushButton:pressed { background: #064E3B; }"
+        "QPushButton { background: #059669; color: white; font-weight: 600;"
+        "  padding: 0 20px; border-radius: 6px; font-size: 13px; border: none; }"
+        "QPushButton:hover { background: #047857; }"
+        "QPushButton:pressed { background: #065F46; }"
         "QPushButton:disabled { background: #E5E7EB; color: #9CA3AF; }"
     );
     btnRow->addWidget(m_compareBtn);
     btnRow->addStretch();
-    cardLayout->addLayout(btnRow);
+    settingsLayout->addLayout(btnRow);
 
-    // Status / file info
+    // Status label
     m_statusLabel = new QLabel("Select year and months, then click Load.");
-    m_statusLabel->setStyleSheet("color: #6B7280; font-style: italic; padding: 4px 0; font-size: 13px;");
+    m_statusLabel->setStyleSheet(
+        "color: #6B7280; font-style: italic; font-size: 12px; background: transparent;"
+    );
     m_statusLabel->setWordWrap(true);
-    cardLayout->addWidget(m_statusLabel);
+    settingsLayout->addWidget(m_statusLabel);
 
-    m_mainRightLayout->addWidget(selCard);
+    m_mainRightLayout->addWidget(settingsPanel);
+    m_mainRightLayout->addSpacing(10);
 
     // ── Progress bar ──
     m_progressBar = new QProgressBar();
-    m_progressBar->setMaximumHeight(6);
+    m_progressBar->setMaximumHeight(5);
     m_progressBar->setTextVisible(false);
     m_progressBar->setVisible(false);
-    m_mainRightLayout->addWidget(m_progressBar);
-
-    // ── Summary ──
-    m_summaryLabel = new QLabel("");
-    m_summaryLabel->setStyleSheet(
-        "font-weight: 600; font-size: 14px; padding: 8px; border-radius: 6px;"
+    m_progressBar->setStyleSheet(
+        "QProgressBar { background: #E5E7EB; border-radius: 2px; border: none; }"
+        "QProgressBar::chunk { background: #3B82F6; border-radius: 2px; }"
     );
+    m_mainRightLayout->addWidget(m_progressBar);
+    m_mainRightLayout->addSpacing(4);
+
+    // ── Summary label ──
+    m_summaryLabel = new QLabel("");
+    m_summaryLabel->setStyleSheet("font-weight: 600; font-size: 14px; padding: 10px 14px; border-radius: 8px;");
     m_summaryLabel->setVisible(false);
+    m_summaryLabel->setWordWrap(true);
     m_mainRightLayout->addWidget(m_summaryLabel);
+    m_mainRightLayout->addSpacing(8);
 
     // ── Filter bar ──
     QFrame* filterFrame = new QFrame();
     filterFrame->setStyleSheet(
-        "QFrame { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 8px; }"
+        "QFrame { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; }"
     );
     QHBoxLayout* filterLayout = new QHBoxLayout(filterFrame);
     filterLayout->setSpacing(8);
-    filterLayout->setContentsMargins(8, 4, 8, 4);
+    filterLayout->setContentsMargins(12, 6, 12, 6);
 
     QLabel* filterTitle = new QLabel("🔍 Filter:");
-    filterTitle->setStyleSheet("font-weight: 600; font-size: 12px; color: #374151;");
+    filterTitle->setStyleSheet("font-weight: 600; font-size: 12px; color: #374151; background: transparent;");
     filterLayout->addWidget(filterTitle);
 
     auto addFilterCombo = [&](const QString& label) -> QComboBox* {
         QLabel* lbl = new QLabel(label);
-        lbl->setStyleSheet("font-size: 11px; color: #6B7280; font-weight: 500;");
+        lbl->setStyleSheet("font-size: 11px; color: #6B7280; font-weight: 500; background: transparent;");
         filterLayout->addWidget(lbl);
         QComboBox* combo = new QComboBox();
         combo->setStyleSheet(comboStyle());
@@ -326,6 +476,7 @@ void ComparatorTab::setupUI()
 
     filterLayout->addStretch();
     m_mainRightLayout->addWidget(filterFrame);
+    m_mainRightLayout->addSpacing(6);
 
     connect(m_filterMonth,   QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ComparatorTab::applyFilters);
     connect(m_filterMapping, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ComparatorTab::applyFilters);
@@ -334,6 +485,7 @@ void ComparatorTab::setupUI()
 
     // ── Results container (table + undock) ──
     m_resultsContainer = new QWidget();
+    m_resultsContainer->setStyleSheet("QWidget { background: transparent; }");
     m_resultsContainerLayout = new QVBoxLayout(m_resultsContainer);
     m_resultsContainerLayout->setContentsMargins(0, 0, 0, 0);
     m_resultsContainerLayout->setSpacing(4);
@@ -357,33 +509,46 @@ void ComparatorTab::setupUI()
     m_resultsTable->setHorizontalHeaderLabels(
         {"Month", "Mapping", "Sheet", "Row", "Column", "Working", "Compare", "Difference"});
     m_resultsTable->horizontalHeader()->setStretchLastSection(true);
+    m_resultsTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     m_resultsTable->setAlternatingRowColors(true);
-    m_resultsTable->setMinimumHeight(300);
+    m_resultsTable->setMinimumHeight(280);
     m_resultsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_resultsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_resultsTable->setSortingEnabled(true);
+    m_resultsTable->setShowGrid(false);
+    m_resultsTable->verticalHeader()->setVisible(false);
     m_resultsTable->setStyleSheet(
-        "QTableWidget { background: white; gridline-color: #E5E7EB;"
-        "  border-radius: 8px; font-size: 13px; }"
-        "QTableWidget::item { padding: 8px; }"
+        "QTableWidget { background: white; gridline-color: #F3F4F6;"
+        "  border: 1px solid #E5E7EB; border-radius: 8px; font-size: 13px; }"
+        "QTableWidget::item { padding: 7px 10px; color: #1F2937; border-bottom: 1px solid #F3F4F6; }"
+        "QTableWidget::item:selected { background: #EFF6FF; color: #1D4ED8; }"
         "QTableWidget::item:alternate { background: #F9FAFB; }"
-        "QHeaderView::section { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "    stop:0 #F9FAFB, stop:1 #F3F4F6); color: #374151; padding: 10px;"
-        "  font-weight: 600; border: none; border-bottom: 2px solid #E5E7EB; }"
+        "QHeaderView::section { background: #F3F4F6; color: #374151; padding: 8px 10px;"
+        "  font-weight: 600; font-size: 12px; border: none;"
+        "  border-bottom: 2px solid #E5E7EB; border-right: 1px solid #E5E7EB; }"
+        "QHeaderView::section:last { border-right: none; }"
     );
-    m_resultsContainerLayout->addWidget(m_resultsTable, 1);
+    // Set reasonable default column widths
+    m_resultsTable->setColumnWidth(0, 90);   // Month
+    m_resultsTable->setColumnWidth(1, 120);  // Mapping
+    m_resultsTable->setColumnWidth(2, 160);  // Sheet
+    m_resultsTable->setColumnWidth(3, 50);   // Row
+    m_resultsTable->setColumnWidth(4, 60);   // Column
+    m_resultsTable->setColumnWidth(5, 100);  // Working
+    m_resultsTable->setColumnWidth(6, 100);  // Compare
 
+    m_resultsContainerLayout->addWidget(m_resultsTable, 1);
     m_mainRightLayout->addWidget(m_resultsContainer, 1);
 
-    m_splitter->addWidget(rightPanel);
-    m_splitter->setSizes({420, 800});
+    m_splitter->addWidget(rightScroll);
+    m_splitter->setSizes({380, 900});
     m_splitter->setStretchFactor(0, 0);
     m_splitter->setStretchFactor(1, 1);
 
     // Connections
-    connect(m_loadBtn, &QPushButton::clicked, this, &ComparatorTab::onLoad);
+    connect(m_loadBtn,    &QPushButton::clicked, this, &ComparatorTab::onLoad);
     connect(m_compareBtn, &QPushButton::clicked, this, &ComparatorTab::onCompare);
-    connect(m_undockBtn, &QPushButton::clicked, this, &ComparatorTab::onUndock);
+    connect(m_undockBtn,  &QPushButton::clicked, this, &ComparatorTab::onUndock);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -547,84 +712,48 @@ void ComparatorTab::onCompare()
             continue;
         }
 
+        QSet<QString> reported; // dedup set: "sheet!row!col"
+        auto checkCell = [&](const QString& sheet, int row, int colNum, const QString& colLetter, const QString& typeTag) {
+            QString dedupKey = QString("%1!%2!%3").arg(sheet).arg(row).arg(colLetter);
+            if (reported.contains(dedupKey)) return;
+            reported.insert(dedupKey);
+
+            // Use effectiveValue: evaluates SUM/arithmetic formulas inline so that
+            // stale cached <v> values in either file don't cause false mismatches.
+            double wVal = effectiveValue(&handler, workingKey, sheet, row, colNum);
+            double cVal = effectiveValue(&handler, compareKey, sheet, row, colNum);
+
+            double rw = roundToPrecision(wVal, decimals);
+            double rc = roundToPrecision(cVal, decimals);
+
+            totalCells++;
+
+            double diff = rw - rc;
+            bool mismatch = (decimals < 0) ? (wVal != cVal) : (std::abs(diff) > 0.0001);
+
+            if (mismatch) {
+                CompareResult cr;
+                cr.month = month;
+                cr.mappingType = typeTag;
+                cr.sheetName = sheet;
+                cr.row = row;
+                cr.column = colLetter;
+                cr.workingValue = rw;
+                cr.compareValue = rc;
+                cr.difference = diff;
+                m_allMismatches.append(cr);
+            }
+        };
+
+        // Primary mappings loop
         for (int idx : checkedIndices) {
             const MappingEntry& entry = items[idx].entry;
             const QString& destSheet = entry.destSheet;
             const QString& destCol = entry.destColumn;
             int destColNum = handler.letterToColumn(destCol);
 
-            // Primary column comparison
             for (auto rit = entry.rowMap.constBegin(); rit != entry.rowMap.constEnd(); ++rit) {
-                int destRow = rit.key();
-
-                QVariant wv = handler.getCellValue(workingKey, destSheet, destRow, destColNum);
-                QVariant cv = handler.getCellValue(compareKey, destSheet, destRow, destColNum);
-
-                double wVal = wv.canConvert<double>() ? wv.toDouble() : 0.0;
-                double cVal = cv.canConvert<double>() ? cv.toDouble() : 0.0;
-
-                // Round to selected precision
-                double rw = roundToPrecision(wVal, decimals);
-                double rc = roundToPrecision(cVal, decimals);
-
-                totalCells++;
-
-                double diff = rw - rc;
-                bool mismatch = (decimals < 0) ? (wVal != cVal) : (std::abs(diff) > 0.0001);
-
-                if (mismatch) {
-                    CompareResult cr;
-                    cr.month = month;
-                    cr.mappingType = entry.sourceFileType;
-                    cr.sheetName = destSheet;
-                    cr.row = destRow;
-                    cr.column = destCol;
-                    cr.workingValue = rw;
-                    cr.compareValue = rc;
-                    cr.difference = diff;
-                    m_allMismatches.append(cr);
-                }
-            }
-
-            // IP-IZ cumulative columns for MZLZ Consolidated
-            if (destSheet.contains("MZLZ Consolidated", Qt::CaseInsensitive)) {
-                static const QStringList cumColNames = {
-                    "IP", "IQ", "IR", "IS", "IT", "IU", "IV", "IW", "IX", "IY", "IZ"
-                };
-                for (const QString& cumCol : cumColNames) {
-                    int cumColNum = handler.letterToColumn(cumCol);
-                    if (cumColNum <= 0) continue;
-
-                    for (auto rit = entry.rowMap.constBegin(); rit != entry.rowMap.constEnd(); ++rit) {
-                        int destRow = rit.key();
-
-                        QVariant wv = handler.getCellValue(workingKey, destSheet, destRow, cumColNum);
-                        QVariant cv = handler.getCellValue(compareKey, destSheet, destRow, cumColNum);
-
-                        double wVal = wv.canConvert<double>() ? wv.toDouble() : 0.0;
-                        double cVal = cv.canConvert<double>() ? cv.toDouble() : 0.0;
-
-                        // IP-IZ always rounded to whole numbers (standard rounding: 20.5→21, 20.4→20)
-                        double rw = std::round(wVal);
-                        double rc = std::round(cVal);
-
-                        totalCells++;
-
-                        double diff = rw - rc;
-                        if (std::abs(diff) > 0.0001) {
-                            CompareResult cr;
-                            cr.month = month;
-                            cr.mappingType = entry.sourceFileType + " (cum)";
-                            cr.sheetName = destSheet;
-                            cr.row = destRow;
-                            cr.column = cumCol;
-                            cr.workingValue = rw;
-                            cr.compareValue = rc;
-                            cr.difference = diff;
-                            m_allMismatches.append(cr);
-                        }
-                    }
-                }
+                checkCell(destSheet, rit.key(), destColNum, destCol, entry.sourceFileType);
             }
         }
 

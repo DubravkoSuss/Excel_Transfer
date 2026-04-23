@@ -15,19 +15,48 @@ static double roundTo5(double v) {
     return std::round(v * 100000.0) / 100000.0;
 }
 
-// EvaluateF a simple Excel formula by reading cell values from the workbook.
-// Expanded to support: =SUM(X1:X5), =SUM(X1,X3,X5), =X1+X2-X3, and division by constants (e.g. /1000).
+// Evaluate a simple Excel formula by reading cell values from the workbook.
+// Supports: =SUM(X1:X5), =SUM(X1,X3,X5), =X1+X2-X3, and trailing /constant suffix.
+// Sets *ok=true only when the formula was fully understood; callers must NOT trust
+// the return value when *ok==false (unsupported functions, cross-sheet refs, etc.).
 static double evaluateSimpleFormula(ExcelHandler* handler, const QString& key,
-                                    const QString& sheet, const QString& formula)
+                                    const QString& sheet, const QString& formula,
+                                    bool* ok = nullptr)
 {
-    if (!handler || formula.isEmpty()) return 0.0;
+    if (!handler || formula.isEmpty()) { if (ok) *ok = false; return 0.0; }
 
     QString f = formula.trimmed();
     if (f.startsWith('=')) f = f.mid(1);
     f.remove('$');
     if (f.startsWith('+')) f = f.mid(1);
+    f = f.trimmed();
 
-    // Look for division suffix like "/1000" or "/-1000"
+    if (f.isEmpty()) { if (ok) *ok = false; return 0.0; }
+
+    // ── Allowlist gate ──────────────────────────────────────────────────────
+    // Reject cross-sheet references (contain '!')
+    if (f.contains('!')) { if (ok) *ok = false; return 0.0; }
+
+    // Reject any function call that isn't SUM — allowlist approach.
+    // Matches: IFERROR(, SUMPRODUCT(, VLOOKUP(, COUNTA(, etc.
+    // Does NOT match: SUM( (negative lookahead).
+    static const QRegularExpression nonSumFuncRx(
+        "(?!SUM\\b)[A-Z_][A-Z0-9_.]*\\s*\\(",
+        QRegularExpression::CaseInsensitiveOption);
+    if (nonSumFuncRx.match(f).hasMatch()) { if (ok) *ok = false; return 0.0; }
+
+    // Reject stray parentheses that aren't part of SUM(...)
+    // e.g. =(A1+A2)/1000 or =A1*(A2>0) — we don't handle grouping or comparisons
+    {
+        QString withoutSum = f;
+        static const QRegularExpression sumStripRx("SUM\\([^)]*\\)", QRegularExpression::CaseInsensitiveOption);
+        withoutSum.remove(sumStripRx);
+        if (withoutSum.contains('(') || withoutSum.contains(')')) {
+            if (ok) *ok = false; return 0.0;
+        }
+    }
+
+    // ── Parse trailing /constant divisor ────────────────────────────────────
     double divisor = 1.0;
     static const QRegularExpression divRx("/\\s*(-?[0-9.]+)\\s*$");
     auto divMatch = divRx.match(f);
@@ -37,25 +66,29 @@ static double evaluateSimpleFormula(ExcelHandler* handler, const QString& key,
         f = f.left(divMatch.capturedStart()).trimmed();
     }
 
-    auto readCell = [&](const QString& cellRef) -> double {
-        static const QRegularExpression cellRefRx("^([A-Z]+)(\\d+)$", QRegularExpression::CaseInsensitiveOption);
+    // ── Cell-ref validator (strict) ─────────────────────────────────────────
+    static const QRegularExpression cellRefRx("^([A-Z]+)(\\d+)$", QRegularExpression::CaseInsensitiveOption);
+
+    auto readCell = [&](const QString& cellRef, bool* cellOk) -> double {
         auto m = cellRefRx.match(cellRef.trimmed());
-        if (!m.hasMatch()) return 0.0;
+        if (!m.hasMatch()) { if (cellOk) *cellOk = false; return 0.0; }
+        if (cellOk) *cellOk = true;
         QString col = m.captured(1);
         int row = m.captured(2).toInt();
         QVariant val = handler->getCellValue(key, sheet, row, handler->letterToColumn(col));
         return val.canConvert<double>() ? val.toDouble() : 0.0;
     };
 
-    auto sumRange = [&](const QString& rangeStr) -> double {
+    auto sumRange = [&](const QString& rangeStr, bool* rangeOk) -> double {
         static const QRegularExpression rangeRx("^([A-Z]+)(\\d+):([A-Z]+)(\\d+)$", QRegularExpression::CaseInsensitiveOption);
         auto m = rangeRx.match(rangeStr.trimmed());
-        if (!m.hasMatch()) return readCell(rangeStr);
-        
+        if (!m.hasMatch()) return readCell(rangeStr, rangeOk);
+        if (rangeOk) *rangeOk = true;
+
         QString col1 = m.captured(1).toUpper(), col2 = m.captured(3).toUpper();
         int row1 = m.captured(2).toInt(), row2 = m.captured(4).toInt();
         double total = 0.0;
-        
+
         if (col1 == col2) {
             int c = handler->letterToColumn(col1);
             for (int r = qMin(row1, row2); r <= qMax(row1, row2); ++r) {
@@ -72,38 +105,75 @@ static double evaluateSimpleFormula(ExcelHandler* handler, const QString& key,
         return total;
     };
 
-    static const QRegularExpression sumRx("^SUM\\((.+)\\)$", QRegularExpression::CaseInsensitiveOption);
-    auto sumMatch = sumRx.match(f);
-    double resultValue = 0.0;
+    // ── evaluateToken: evaluate a single operand token ──────────────────────
+    // Handles:  SUM(range,...)   |  CellRef   |  Numeric literal
+    auto evaluateToken = [&](const QString& tok, bool* tokOk) -> double {
+        QString t = tok.trimmed();
+        if (t.isEmpty()) { if (tokOk) *tokOk = true; return 0.0; }
 
-    if (sumMatch.hasMatch()) {
-        QString inner = sumMatch.captured(1);
-        QStringList parts = inner.split(',');
-        for (const QString& part : parts) resultValue += sumRange(part.trimmed());
-    } else {
-        double currentResult = 0.0;
+        // SUM(...)
+        static const QRegularExpression sumTokenRx("^SUM\\((.+)\\)$",
+            QRegularExpression::CaseInsensitiveOption);
+        auto sm = sumTokenRx.match(t);
+        if (sm.hasMatch()) {
+            if (tokOk) *tokOk = true;
+            double s = 0.0;
+            QStringList parts = sm.captured(1).split(',');
+            for (const QString& part : parts) {
+                bool pok = false;
+                s += sumRange(part.trimmed(), &pok);
+                if (!pok) { if (tokOk) *tokOk = false; return 0.0; }
+            }
+            return s;
+        }
+
+        // Numeric literal
+        bool numOk = false;
+        double num = t.toDouble(&numOk);
+        if (numOk) { if (tokOk) *tokOk = true; return num; }
+
+        // Cell reference
+        bool cellOk = false;
+        double v = readCell(t, &cellOk);
+        if (tokOk) *tokOk = cellOk;
+        return v;
+    };
+
+    // ── Arithmetic tokenizer: scan for operators OUTSIDE parentheses ─────────
+    // This handles =SUM(A1:A5)+SUM(B1:B3)-C6  and  =A1+B2-SUM(C1:C5)  etc.
+    double resultValue = 0.0;
+    {
         int sign = 1;
-        int i = 0;
+        int depth = 0;       // parenthesis depth — don't split on +/- inside SUM(...)
         QString token;
-        while (i <= f.size()) {
-            QChar ch = (i < f.size()) ? f[i] : QChar('+');
-            if (ch == '+' || ch == '-') {
+
+        for (int i = 0; i <= f.size(); ++i) {
+            QChar ch = (i < f.size()) ? f[i] : QChar('+'); // sentinel to flush last token
+
+            if (ch == '(') {
+                ++depth;
+                token += ch;
+            } else if (ch == ')') {
+                --depth;
+                token += ch;
+            } else if ((ch == '+' || ch == '-') && depth == 0) {
+                // Flush accumulated token
                 token = token.trimmed();
                 if (!token.isEmpty()) {
-                    bool ok = false;
-                    double num = token.toDouble(&ok);
-                    currentResult += sign * (ok ? num : readCell(token));
+                    bool tokOk = false;
+                    double v = evaluateToken(token, &tokOk);
+                    if (!tokOk) { if (ok) *ok = false; return 0.0; }
+                    resultValue += sign * v;
                 }
                 sign = (ch == '+') ? 1 : -1;
                 token.clear();
             } else {
                 token += ch;
             }
-            ++i;
         }
-        resultValue = currentResult;
     }
 
+    if (ok) *ok = true;
     return (divisor != 1.0) ? (resultValue / divisor) : resultValue;
 }
 
@@ -147,7 +217,7 @@ static const QStringList cumColOrder = {
     "IP", "IQ", "IR", "IS", "IT", "IU", "IV", "IW", "IX", "IY", "IZ"
 };
 // Rows that should avoid horizontal accumulation (Direct Copy from base month to cumulative)
-static const QSet<int> directCopyRows = { 16, 18, 13, 12 };
+static const QSet<int> directCopyRows = { 12, 13, 16, 18 };
 
 
 TransferService::Result TransferService::transferEntry(const MappingEntry& entry,
@@ -213,10 +283,6 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
     // pax_transfer/traffic_mott: reads from pax file, writes to cost_control — no division
     const bool isPaxTransfer = (sourceFileType == "pax_transfer");
     const bool isTrafficMott = (sourceFileType == "traffic_mott");
-    if (entry.destColumn == "GX") {
-        // November GX column should be scaled by -1000 instead of +1000
-        divideBy1000 = true;
-    }
     const bool isYtdRow216 = (sourceFileType == "sap_ytd") && entry.rowMap.contains(216);
 
     if (sourceFileType == "sap_ytd") {
@@ -329,6 +395,19 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
                 }
             }
             if (found.isEmpty()) {
+                // Fallback: partial match for any "traffic mott" sheet (handles year mismatch,
+                // e.g. cost_control file still has "TRAFFIC mott 2025" when year=2024)
+                for (const QString& name : m_handler->getSheetNames(destKey)) {
+                    if (name.trimmed().toLower().contains("traffic mott")) {
+                        qInfo() << "[TRAFFIC_MOTT] Exact sheet" << destSheet
+                                << "not found in" << destKey
+                                << "— using fallback:" << name;
+                        found = name;
+                        break;
+                    }
+                }
+            }
+            if (found.isEmpty()) {
                 qWarning() << "TransferService: dest sheet" << destSheet << "not found in" << destKey
                            << "— skipping to avoid creating new sheet.";
                 return result;
@@ -377,7 +456,9 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
                     total += value.toDouble();
             }
 
-            bool shouldDivide = divideBy1000;
+            // Rows 12, 13, 16 are headcount rows — never divide or round by 1000
+            const bool isHeadcountRow = (destRow == 12 || destRow == 13 || destRow == 16);
+            bool shouldDivide = divideBy1000 && !isHeadcountRow;
             if (shouldDivide) {
                 if (sourceFileType == "pax") {
                     const bool paxDivide = (destRow >= 5 && destRow <= 7);
@@ -386,9 +467,8 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
                         total = roundTo5(total);
                     }
                 } else if ((sourceFileType == "sap" || sourceFileType == "sap_ytd")
-                           && (destRow == 212 || destRow == 216 || destRow == 218 || destRow == 214
-                               || destRow == 222 || destRow == 226)) {
-                    // Rows 212-226 PAX/EUR section must not be sign-flipped
+                           && (destRow >= 210 && destRow <= 226 && destRow % 2 == 0)) {
+                    // Rows 210-226 (even) PAX/EUR section must not be sign-flipped
                     total /= 1000.0;
                     total = roundTo5(total);
                 } else {
@@ -447,108 +527,138 @@ TransferService::Result TransferService::transferEntry(const MappingEntry& entry
 }
 
 // ── Execute All cumulative pass ─────────────────────────────────────────────
-// Computes ONLY the single cumulative column for (targetMonth - 1).
-// e.g. if user selects October (idx 9), computes IX (idx 8) = IW + FB.
-// Trusts all existing cumulative values in the spreadsheet.
-// The target month's own column (IY for Oct) is NOT touched.
+// When the user transfers month M, the cumulative column written is for M-1.
+// Example: user selects May (idx 4) → writes IS (April, idx 3) = "Reported 1-4".
+// May's own cumulative (IT) is written when June is selected.
+// January (idx 0): targetIdx-1 = -1 → nothing to write (no prior cumulative).
 void TransferService::runCumulativePassExecuteAll(const QSet<int>& allRows,
                                                    const QString& destSheet,
                                                    int year,
                                                    const QString& destKey,
-                                                   const QString& targetMonth)
+                                                   const QString& targetMonth,
+                                                   const QMap<QString, QString>& monthDestKeys,
+                                                   bool clearFirst)
 {
     Q_UNUSED(year);
     if (!m_handler) return;
 
     int targetIdx = monthOrder.indexOf(targetMonth);
-    if (targetIdx <= 0) return; // nothing to compute for January or invalid
-
-    // Compute month-1 cumulative column. NEVER touch the target month's column.
-    // e.g. October (idx 9) → compute cumColOrder[8] = IX = IW + FB
-    int colToCompute = targetIdx - 1;
-    if (colToCompute >= cumColOrder.size()) return;
-
-    int cumColIdx  = m_handler->letterToColumn(cumColOrder[colToCompute]);
-    int baseColIdx = m_handler->letterToColumn(baseColOrder[colToCompute]); // base data for month-1
-
-    // Previous cumulative column (if any). For colToCompute==0 (IP/Jan), there's no previous.
-    int prevCumColIdx = -1;
-    if (colToCompute > 0) {
-        prevCumColIdx = m_handler->letterToColumn(cumColOrder[colToCompute - 1]);
+    if (targetIdx <= 0) {
+        qDebug() << "[CUM_EXEC_ALL] No prior cumulative for month:" << targetMonth;
+        return;
     }
+
+    // Write cumulative for the PREVIOUS month (targetIdx - 1)
+    const int cumIdx        = targetIdx - 1;
+    const int cumColNum     = m_handler->letterToColumn(cumColOrder[cumIdx]);
+    // baseColNum = base column FOR the month we are writing the cumulative of.
+    // This base data lives in THAT month's own file (prevMonthDestKey).
+    const int baseColNum    = m_handler->letterToColumn(baseColOrder[cumIdx]);
+    const int prevCumColNum = (cumIdx > 0)
+                              ? m_handler->letterToColumn(cumColOrder[cumIdx - 1])
+                              : -1; // January cumulative: no prior
+
+    // prevMonthDestKey: the destKey of the month whose base+cum we need to read.
+    // e.g. writing IW (Aug cum) when targetMonth=Sep:
+    //   - base EF lives in August's file
+    //   - prevCum IV lives in July's file
+    const QString prevMonthName     = (cumIdx >= 0 && cumIdx < monthOrder.size())
+                                      ? monthOrder[cumIdx] : QString();
+    const QString prevPrevMonthName = (cumIdx > 0 && (cumIdx-1) < monthOrder.size())
+                                      ? monthOrder[cumIdx - 1] : QString();
+
+    // Resolve per-month destKeys. Fall back to the current file if not provided.
+    const QString baseMonthKey    = monthDestKeys.value(prevMonthName, destKey);
+    const QString prevCumKey      = monthDestKeys.value(prevPrevMonthName, destKey);
 
     QSet<int> rowsToSum = allRows;
     for (int r : m_subtotalsMap.keys()) rowsToSum.insert(r);
-    // Force inclusion of all MZLZ Report rows so empty/unmapped rows get a literal 0 instead of blank
     for (int r = 5; r <= 235; ++r) rowsToSum.insert(r);
 
+    QList<int> subRows = m_subtotalsMap.keys();
+    std::sort(subRows.begin(), subRows.end());
+
     qDebug() << "[CUM_EXEC_ALL] targetMonth=" << targetMonth
-             << "computing column" << cumColOrder[colToCompute]
-             << "= prev(" << (colToCompute > 0 ? cumColOrder[colToCompute - 1] : "none")
-             << ") + base(" << baseColOrder[colToCompute] << ")"
+             << "writingCumFor=" << prevMonthName
+             << "base=" << baseColOrder[cumIdx] << "from" << baseMonthKey
+             << "cum="  << cumColOrder[cumIdx]
+             << "prevCum=" << (prevCumColNum >= 0 ? cumColOrder[cumIdx-1] : QString("none"))
+             << "from" << prevCumKey
+             << "clearFirst=" << clearFirst
              << "rows=" << rowsToSum.size();
 
-    // ── PASS 1: Normal Rows (prevCum + baseVal) ──
+    // ── OPTIONAL CLEAR: delete rows 5-228 of the cumulative column ────────────
+    // Called on the second run (after first save) so any stale template values
+    // are removed (not zeroed) before the clean recompute — equivalent to
+    // selecting the column in Excel and pressing Delete.
+    if (clearFirst) {
+        for (int row = 5; row <= 228; ++row) {
+            m_handler->deleteCellValue(destKey, destSheet, row, cumColNum);
+        }
+        qDebug() << "[CUM_EXEC_ALL] clearFirst: deleted rows 5-228 col" << cumColOrder[cumIdx];
+    }
+
+    // ── PASS 1: Normal rows — prevCum (from prevPrevMonth file) + base (from prevMonth file) ──
+    // Each month's file only contains its own month's base data.
+    // Read base from the month-being-accumulated's own file, and prevCum from
+    // the month before that's file.  Write the computed cumulative into the
+    // TARGET month's file (the one currently being transferred).
     for (int row : rowsToSum) {
-        if (m_subtotalsMap.contains(row)) {
-            continue; // Subtotals handled in Pass 2
-        }
+        if (m_subtotalsMap.contains(row)) continue;
 
-        // If there is no descriptive text in Column B (index 2), treat it as an aesthetic spacer and skip
-        if (m_handler->getCellValue(destKey, destSheet, row, 2).toString().trimmed().isEmpty()) {
+        // Skip aesthetic spacer rows
+        if (m_handler->getCellValue(destKey, destSheet, row, 2).toString().trimmed().isEmpty())
             continue;
-        }
 
-        double prevCum = 0.0;
-        if (prevCumColIdx >= 0) {
-            QVariant prevRaw = m_handler->getCellValue(destKey, destSheet, row, prevCumColIdx);
-            prevCum = prevRaw.canConvert<double>() ? prevRaw.toDouble() : 0.0;
-
-            if (prevCum == 0.0) {
-                QString formula = m_handler->getCellFormula(destKey, destSheet, row, prevCumColIdx);
-                if (!formula.isEmpty()) {
-                    double formulaVal = evaluateSimpleFormula(m_handler, destKey, destSheet, formula);
-                    if (formula.contains('!') && formulaVal == 0.0 && prevCum != 0.0) {
-                        // Trust cached
-                    } else if (formulaVal != 0.0 || prevCum == 0.0) {
-                        prevCum = formulaVal;
-                    }
-                }
-            }
-        }
-
-        QVariant baseRaw = m_handler->getCellValue(destKey, destSheet, row, baseColIdx);
-        double baseVal = baseRaw.canConvert<double>() ? baseRaw.toDouble() : 0.0;
-
-        if (baseVal == 0.0) {
-            QString formula = m_handler->getCellFormula(destKey, destSheet, row, baseColIdx);
-            if (!formula.isEmpty()) {
-                double formulaVal = evaluateSimpleFormula(m_handler, destKey, destSheet, formula);
-                if (formula.contains('!') && formulaVal == 0.0 && baseVal != 0.0) {
-                    // Trust cached
-                } else if (formulaVal != 0.0 || baseVal == 0.0) {
-                    baseVal = formulaVal;
-                }
-            }
-        }
+        // Read base from the correct month's file
+        QVariant baseRaw = m_handler->getCellValue(baseMonthKey, destSheet, row, baseColNum);
+        double base = baseRaw.canConvert<double>() ? baseRaw.toDouble() : 0.0;
 
         if (directCopyRows.contains(row)) {
-            m_handler->setCellValue(destKey, destSheet, row, cumColIdx, roundTo5(baseVal));
+            m_handler->setCellValue(destKey, destSheet, row, cumColNum, roundTo5(base));
         } else {
-            m_handler->setCellValue(destKey, destSheet, row, cumColIdx, roundTo5(prevCum + baseVal));
+            double prevCum = 0.0;
+            if (prevCumColNum >= 0) {
+                // Read prevCum from the correct prior month's file
+                QVariant prevRaw = m_handler->getCellValue(prevCumKey, destSheet, row, prevCumColNum);
+                prevCum = prevRaw.canConvert<double>() ? prevRaw.toDouble() : 0.0;
+            }
+            m_handler->setCellValue(destKey, destSheet, row, cumColNum, roundTo5(prevCum + base));
         }
     }
 
-    // ── PASS 2: Subtotals (dynamically evaluated natively on cumulative column) ──
-    QList<int> subRows = m_subtotalsMap.keys();
-    std::sort(subRows.begin(), subRows.end());
-    QString currentCumLetter = cumColOrder[colToCompute];
-    for (int row : subRows) {
-        QString actualFormula = m_subtotalsMap.value(row);
-        actualFormula.replace("HW", currentCumLetter);
-        
-        double subtotal = evaluateSimpleFormula(m_handler, destKey, destSheet, actualFormula);
-        m_handler->setCellValue(destKey, destSheet, row, cumColIdx, roundTo5(subtotal));
+    // ── PASS 2: Subtotals – ascending/descending convergence loop ────────────
+    const QString currentCumLetter = cumColOrder[cumIdx];
+    const int maxConvergenceIter = 5;
+    for (int iter = 0; iter < maxConvergenceIter; ++iter) {
+        bool changed = false;
+
+        for (int row : subRows) {
+            QString f = m_subtotalsMap.value(row);
+            f.replace("HW", currentCumLetter);
+            double val = roundTo5(evaluateSimpleFormula(m_handler, destKey, destSheet, f));
+            QVariant prev = m_handler->getCellValue(destKey, destSheet, row, cumColNum);
+            double prevVal = prev.canConvert<double>() ? prev.toDouble() : 0.0;
+            if (qAbs(val - prevVal) > 0.001) changed = true;
+            m_handler->setCellValue(destKey, destSheet, row, cumColNum, val);
+        }
+
+        for (int i = subRows.size() - 1; i >= 0; --i) {
+            int row = subRows[i];
+            QString f = m_subtotalsMap.value(row);
+            f.replace("HW", currentCumLetter);
+            double val = roundTo5(evaluateSimpleFormula(m_handler, destKey, destSheet, f));
+            QVariant prev = m_handler->getCellValue(destKey, destSheet, row, cumColNum);
+            double prevVal = prev.canConvert<double>() ? prev.toDouble() : 0.0;
+            if (qAbs(val - prevVal) > 0.001) changed = true;
+            m_handler->setCellValue(destKey, destSheet, row, cumColNum, val);
+        }
+
+        if (!changed) {
+            qDebug() << "[CUM_EXEC_ALL] Column" << currentCumLetter
+                     << "subtotals converged after" << (iter + 1) << "iteration(s)";
+            break;
+        }
     }
 }
 
@@ -576,7 +686,7 @@ void TransferService::runCumulativePassAllMonths(const QSet<int>& allRows,
              << "rows=" << rowsToSum.size();
 
     QMap<int, double> runningSums;
-    for (int m = 0; m <= targetIdx && m < cumColOrder.size(); ++m) {
+    for (int m = 0; m < targetIdx && m < cumColOrder.size(); ++m) {
         int cumColIdx  = m_handler->letterToColumn(cumColOrder[m]);  // IP, IQ, IR, ...
         int baseColIdx = m_handler->letterToColumn(baseColOrder[m]); // G, W, AM, ...
 
@@ -594,20 +704,14 @@ void TransferService::runCumulativePassAllMonths(const QSet<int>& allRows,
                 continue;
             }
 
+            // Read the base column value directly.
+            // Do NOT evaluate formulas here: base columns are written by transferEntry
+            // with setCellValue (plain values). Evaluating any residual formula from the
+            // Excel template would override the correctly-transferred value with a
+            // stale formula result (often 0), causing all cumulative columns from
+            // month 3 onward to repeat the month-2 value.
             QVariant raw = m_handler->getCellValue(destKey, destSheet, row, baseColIdx);
             double val = raw.canConvert<double>() ? raw.toDouble() : 0.0;
-
-            if (val == 0.0) {
-                QString formula = m_handler->getCellFormula(destKey, destSheet, row, baseColIdx);
-                if (!formula.isEmpty()) {
-                    double formulaVal = evaluateSimpleFormula(m_handler, destKey, destSheet, formula);
-                    if (formula.contains('!') && formulaVal == 0.0 && val != 0.0) {
-                        // Trust cached value
-                    } else if (formulaVal != 0.0 || val == 0.0) {
-                        val = formulaVal;
-                    }
-                }
-            }
 
             if (directCopyRows.contains(row)) {
                 runningSums[row] = val;
@@ -617,19 +721,157 @@ void TransferService::runCumulativePassAllMonths(const QSet<int>& allRows,
             m_handler->setCellValue(destKey, destSheet, row, cumColIdx, roundTo5(runningSums[row]));
         }
 
-        // ── PASS 2: Subtotals (dynamically calculate from the newly generated YTD column) ──
+        // ── PASS 2: Subtotals – ascending/descending convergence loop ──
+        // Some subtotals reference other subtotals at higher row numbers
+        // (e.g. row 154 = HW158 - HW155), so a single ascending pass won't resolve
+        // all dependencies.  We alternate ascending ↑ and descending ↓ passes until
+        // every value stabilises (or a hard cap is reached).
         QList<int> subRows = m_subtotalsMap.keys();
         std::sort(subRows.begin(), subRows.end());
         QString currentCumLetter = cumColOrder[m];
-        for (int row : subRows) {
-            QString actualFormula = m_subtotalsMap.value(row);
-            actualFormula.replace("HW", currentCumLetter);
-            
-            double subtotal = evaluateSimpleFormula(m_handler, destKey, destSheet, actualFormula);
-            runningSums[row] = subtotal; // Keep the running map in sync for correctness
-            m_handler->setCellValue(destKey, destSheet, row, cumColIdx, roundTo5(subtotal));
+
+        const int maxConvergenceIter = 5;
+        for (int iter = 0; iter < maxConvergenceIter; ++iter) {
+            bool changed = false;
+
+            // ── Ascending pass (low row → high row) ──
+            for (int row : subRows) {
+                QString f = m_subtotalsMap.value(row);
+                f.replace("HW", currentCumLetter);
+                double val = roundTo5(evaluateSimpleFormula(m_handler, destKey, destSheet, f));
+                QVariant prev = m_handler->getCellValue(destKey, destSheet, row, cumColIdx);
+                double prevVal = prev.canConvert<double>() ? prev.toDouble() : 0.0;
+                if (qAbs(val - prevVal) > 0.001) changed = true;
+                runningSums[row] = val;
+                m_handler->setCellValue(destKey, destSheet, row, cumColIdx, val);
+            }
+
+            // ── Descending pass (high row → low row) ──
+            for (int i = subRows.size() - 1; i >= 0; --i) {
+                int row = subRows[i];
+                QString f = m_subtotalsMap.value(row);
+                f.replace("HW", currentCumLetter);
+                double val = roundTo5(evaluateSimpleFormula(m_handler, destKey, destSheet, f));
+                QVariant prev = m_handler->getCellValue(destKey, destSheet, row, cumColIdx);
+                double prevVal = prev.canConvert<double>() ? prev.toDouble() : 0.0;
+                if (qAbs(val - prevVal) > 0.001) changed = true;
+                runningSums[row] = val;
+                m_handler->setCellValue(destKey, destSheet, row, cumColIdx, val);
+            }
+
+            if (!changed) {
+                qDebug() << "[CUM_PASS_ALL] Subtotals converged at month" << m
+                         << "after" << (iter + 1) << "iteration(s)";
+                break;
+            }
         }
     }
+}
+
+
+// ── Execute RT cumulative pass ──────────────────────────────────────────────
+// Exact same logic as runCumulativePassExecuteAll but takes int month (1=Jan,
+// 12=Dec) instead of a QString. Computes ONLY the single cumulative column for
+// `month` (e.g. IQ for February). prevCum is read directly from the file —
+// already correct from the prior RT step or the copied source file.
+// Completely decoupled from Execute All so neither path can break the other.
+void TransferService::runCumulativePassRT(const QSet<int>& destRows,
+                                          const QString& sheetName,
+                                          int year,
+                                          const QString& destKey,
+                                          int month)
+{
+    Q_UNUSED(year);
+    if (!m_handler) return;
+
+    // month is 1-based; convert to 0-based index
+    const int targetIdx = month - 1;
+    if (targetIdx < 0 || targetIdx >= cumColOrder.size()) {
+        qWarning() << "[CUM_RT] Invalid month:" << month;
+        return;
+    }
+
+    const int baseColIdx    = m_handler->letterToColumn(baseColOrder[targetIdx]);
+    const int cumColIdx     = m_handler->letterToColumn(cumColOrder[targetIdx]);
+    const int prevCumColIdx = (targetIdx > 0)
+                              ? m_handler->letterToColumn(cumColOrder[targetIdx - 1])
+                              : -1; // January: no previous cumulative
+
+    // Extend with subtotals and full MZLZ report range (same as Execute All)
+    QSet<int> rowsToSum = destRows;
+    for (int r : m_subtotalsMap.keys()) rowsToSum.insert(r);
+    for (int r = 5; r <= 235; ++r) rowsToSum.insert(r);
+
+    QList<int> subRows = m_subtotalsMap.keys();
+    std::sort(subRows.begin(), subRows.end());
+
+    qDebug() << "[CUM_RT] month=" << month
+             << "base=" << baseColOrder[targetIdx]
+             << "cum="  << cumColOrder[targetIdx]
+             << "prevCum=" << (prevCumColIdx >= 0 ? cumColOrder[targetIdx - 1] : QString("none"));
+
+    // ── PASS 1: Normal rows — cum = prevCum + base ───────────────────────────
+    for (int row : rowsToSum) {
+        if (m_subtotalsMap.contains(row)) continue;
+
+        // Skip aesthetic spacer rows (no label in column B)
+        if (m_handler->getCellValue(destKey, sheetName, row, 2).toString().trimmed().isEmpty())
+            continue;
+
+        // Read base value (plain — transferEntry always uses setCellValue)
+        QVariant baseRaw = m_handler->getCellValue(destKey, sheetName, row, baseColIdx);
+        double base = baseRaw.canConvert<double>() ? baseRaw.toDouble() : 0.0;
+
+        if (directCopyRows.contains(row)) {
+            // Headcount rows: cum = base (no accumulation)
+            m_handler->setCellValue(destKey, sheetName, row, cumColIdx, roundTo5(base));
+        } else {
+            // Normal rows: cum = prevCum + base
+            double prevCum = 0.0;
+            if (prevCumColIdx >= 0) {
+                QVariant prevRaw = m_handler->getCellValue(destKey, sheetName, row, prevCumColIdx);
+                prevCum = prevRaw.canConvert<double>() ? prevRaw.toDouble() : 0.0;
+            }
+            m_handler->setCellValue(destKey, sheetName, row, cumColIdx, roundTo5(prevCum + base));
+        }
+    }
+
+    // ── PASS 2: Subtotals — ascending/descending convergence loop ────────────
+    const QString cumLetter = cumColOrder[targetIdx];
+    const int maxIter = 5;
+    for (int iter = 0; iter < maxIter; ++iter) {
+        bool changed = false;
+
+        // Ascending pass (low row → high row)
+        for (int row : subRows) {
+            QString f = m_subtotalsMap.value(row);
+            f.replace("HW", cumLetter);
+            double val = roundTo5(evaluateSimpleFormula(m_handler, destKey, sheetName, f));
+            QVariant prev = m_handler->getCellValue(destKey, sheetName, row, cumColIdx);
+            double prevVal = prev.canConvert<double>() ? prev.toDouble() : 0.0;
+            if (qAbs(val - prevVal) > 0.001) changed = true;
+            m_handler->setCellValue(destKey, sheetName, row, cumColIdx, val);
+        }
+
+        // Descending pass (high row → low row)
+        for (int i = subRows.size() - 1; i >= 0; --i) {
+            int row = subRows[i];
+            QString f = m_subtotalsMap.value(row);
+            f.replace("HW", cumLetter);
+            double val = roundTo5(evaluateSimpleFormula(m_handler, destKey, sheetName, f));
+            QVariant prev = m_handler->getCellValue(destKey, sheetName, row, cumColIdx);
+            double prevVal = prev.canConvert<double>() ? prev.toDouble() : 0.0;
+            if (qAbs(val - prevVal) > 0.001) changed = true;
+            m_handler->setCellValue(destKey, sheetName, row, cumColIdx, val);
+        }
+
+        if (!changed) {
+            qDebug() << "[CUM_RT] Subtotals converged after" << (iter + 1) << "iteration(s)";
+            break;
+        }
+    }
+
+    qDebug() << "[CUM_RT] Done — cumulative column" << cumLetter << "written for month" << month;
 }
 
 
@@ -660,11 +902,72 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
         }
     }
 
-    const QString sourceSheet = entry.sourceSheetTemplate.isEmpty() ? "Report" : entry.sourceSheetTemplate;
+    // ── Resolve source sheet name (same fallback logic as transferEntry::resolveSheet) ──
+    // SAP YTD files sometimes use "03_2026" instead of "Report".
+    QString sourceSheet = entry.sourceSheetTemplate.isEmpty() ? "Report" : entry.sourceSheetTemplate;
+    {
+        const QString requested = sourceSheet;
+        const QString requestedNorm = requested.trimmed().toLower();
+        bool exactFound = false;
+        for (const QString& name : m_handler->getSheetNames(srcKey)) {
+            if (name.trimmed().toLower() == requestedNorm) { exactFound = true; break; }
+        }
+        if (!exactFound) {
+            // Try MM_YYYY fallback (e.g. "Report" → "03_2026")
+            if (requestedNorm == "report") {
+                const QString monthNum = ExcelHandler::MONTH_TO_NUM.value(entry.month, "");
+                if (!monthNum.isEmpty()) {
+                    const QString altName = QString("%1_%2").arg(monthNum).arg(year);
+                    for (const QString& name : m_handler->getSheetNames(srcKey)) {
+                        if (name.trimmed().toLower() == altName.toLower()) {
+                            qInfo() << "[SAP_YTD] Sheet" << requested << "not found, using" << name;
+                            sourceSheet = name;
+                            break;
+                        }
+                    }
+                }
+            }
+            // Still not found? Use first available sheet as last resort
+            if (sourceSheet == requested) {
+                const QStringList names = m_handler->getSheetNames(srcKey);
+                if (!names.isEmpty()) {
+                    qWarning() << "[SAP_YTD] Sheet" << requested << "not found in" << srcKey
+                               << "— falling back to" << names.first();
+                    sourceSheet = names.first();
+                }
+            }
+        }
+    }
     const QString destSheet = entry.destSheet.isEmpty() ? "MZLZ Consolidated" : entry.destSheet;
     const QString sourceColumn = entry.sourceColumn.isEmpty() ? "C" : entry.sourceColumn;
     const QString destColumn = entry.destColumn.isEmpty() ? "JG" : entry.destColumn;
 
+    // ── Diagnostic logging ──────────────────────────────────────────────────
+    qInfo() << "[SAP_YTD_DIAG] srcKey=" << srcKey
+            << "srcFile=" << srcFile
+            << "sourceSheet=" << sourceSheet
+            << "sourceColumn=" << sourceColumn
+            << "destColumn=" << destColumn
+            << "rowMap.size=" << entry.rowMap.size()
+            << "isLoaded=" << m_handler->isLoaded(srcKey)
+            << "sheetNames=" << m_handler->getSheetNames(srcKey);
+
+    // Sample check: try reading a known cell to see if data exists
+    if (!entry.rowMap.isEmpty()) {
+        int firstDestRow = entry.rowMap.constBegin().key();
+        const QVector<int>& firstSrcRows = entry.rowMap.constBegin().value();
+        if (!firstSrcRows.isEmpty() && firstSrcRows.first() != 0) {
+            int testSrcRow = firstSrcRows.first();
+            int testCol = m_handler->letterToColumn(sourceColumn);
+            QVariant testVal = m_handler->getCellValue(srcKey, sourceSheet, testSrcRow, testCol);
+            qInfo() << "[SAP_YTD_DIAG] Sample cell: sheet=" << sourceSheet
+                    << "row=" << testSrcRow << "col=" << sourceColumn << "(" << testCol << ")"
+                    << "value=" << testVal << "type=" << testVal.typeName()
+                    << "canConvertDouble=" << testVal.canConvert<double>();
+        }
+    }
+
+    int readCount = 0, emptyCount = 0, zeroSrcCount = 0;
     for (auto it = entry.rowMap.constBegin(); it != entry.rowMap.constEnd(); ++it) {
         int destRow = it.key();
         const QVector<int>& srcRows = it.value();
@@ -674,6 +977,7 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
         if (srcRows.size() == 1 && srcRows.first() == 0) {
             total = 0.0;
             hasValue = true;
+            zeroSrcCount++;
         } else {
             for (int srcRow : srcRows) {
                 QVariant value = m_handler->getCellValue(srcKey, sourceSheet, srcRow,
@@ -681,13 +985,46 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
                 if (value.canConvert<double>()) {
                     total += value.toDouble();
                     hasValue = true;
+                    readCount++;
+                } else {
+                    // Try formula evaluation fallback — .xlsm files (especially 2026+)
+                    // may contain formula cells without cached numeric values
+                    QString valStr = value.toString().trimmed();
+                    if (valStr.startsWith('=')) {
+                        bool fOk = false;
+                        double fVal = evaluateSimpleFormula(m_handler, srcKey, sourceSheet, valStr, &fOk);
+                        if (fOk) {
+                            total += fVal;
+                            hasValue = true;
+                            readCount++;
+                            qDebug() << "[SAP_YTD] Formula fallback: srcRow=" << srcRow
+                                     << "formula=" << valStr << "result=" << fVal;
+                        } else {
+                            emptyCount++;
+                            if (emptyCount <= 5) {
+                                qWarning() << "[SAP_YTD_DIAG] Empty/non-numeric cell: srcRow=" << srcRow
+                                           << "col=" << sourceColumn << "value=" << value
+                                           << "type=" << value.typeName();
+                            }
+                        }
+                    } else {
+                        emptyCount++;
+                        if (emptyCount <= 5) {
+                            qWarning() << "[SAP_YTD_DIAG] Empty/non-numeric cell: srcRow=" << srcRow
+                                       << "col=" << sourceColumn << "value=" << value
+                                       << "type=" << value.typeName();
+                        }
+                    }
                 }
             }
         }
 
-        if (!hasValue) continue;
+        // Always write a value (even 0) so we never leave stale template data in JG
+        if (!hasValue) total = 0.0;
         // JG: rows 212/216/218/222/226 (PAX/EUR section) divide by +1000 (no sign flip); all other rows by -1000
-        if (destColumn == "JG") {
+        // Rows 12, 13, 16 are headcount rows — never divide or round
+        const bool isHeadcountRowYtd = (destRow == 12 || destRow == 13 || destRow == 16);
+        if (destColumn == "JG" && !isHeadcountRowYtd) {
             if (destRow == 212 || destRow == 216 || destRow == 218
                 || destRow == 222 || destRow == 226) {
                 total /= 1000.0;
@@ -700,6 +1037,10 @@ TransferService::Result TransferService::handleSapYtd(const MappingEntry& entry,
                                 m_handler->letterToColumn(destColumn), total);
         result.cellsTransferred++;
     }
+
+    qInfo() << "[SAP_YTD_DIAG] Transfer complete: cellsTransferred=" << result.cellsTransferred
+            << "readCount=" << readCount << "emptyCount=" << emptyCount
+            << "zeroSrcCount=" << zeroSrcCount;
 
     // ── Traffic mott YTD additions ─────────────────────────────────────────────
     // Reads Q column from TRAFFIC mott sheet in cost_control (destKey).

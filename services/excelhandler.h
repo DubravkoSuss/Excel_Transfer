@@ -92,6 +92,7 @@ public:
     QStringList getSheetNames(const QString& key);
     QVariant getCellValue(const QString& key, const QString& sheetName, int row, int col);
     bool setCellValue(const QString& key, const QString& sheetName, int row, int col, const QVariant& value);
+    bool deleteCellValue(const QString& key, const QString& sheetName, int row, int col);
     bool setCellFormula(const QString& key, const QString& sheetName, int row, int col, const QString& formula);
     QString getCellFormula(const QString& key, const QString& sheetName, int row, int col);
     

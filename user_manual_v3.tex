@@ -504,6 +504,8 @@ Each year card shows month checkboxes and quick-select controls:
 \label{fig:yearcard}
 \end{figure}
 
+\clearpage  % Force new page to prevent overflow
+
 \subsubsection{How to Select Months}
 
 \begin{stepbox}
@@ -591,10 +593,12 @@ Maximum \textbf{5 months} can be selected at a time for Execute All. Selecting m
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.82\linewidth]{../../Pictures/Figure6.png}
-\caption{\textbf{Individual Transfer} tab in its initial state. Browse for a \textit{Source File} and \textit{Destination File} using the \textbf{Browse} buttons. Once files are loaded, the \textbf{Select Source Cells (Graphical)} and \textbf{Select Destination Cells (Graphical)} buttons become active for visual cell mapping. The \textit{Transfer Mapping} table at the bottom shows all defined source-to-destination cell pairs ready for execution.}
+\caption{\textbf{Individual Transfer} tab in its initial state. \textbf{Step 1}: Click the \textbf{Browse} button next to \textit{Source File} to select the Excel file you want to copy data FROM (e.g., SAP report, Traffic file). \textbf{Step 2}: Click the \textbf{Browse} button next to \textit{Destination File} to select the Excel file you want to copy data TO (e.g., Cost Control workbook). \textbf{Step 3}: Once both files are loaded, the \textbf{Select Source Cells (Graphical)} button becomes active --- click it to open a visual grid where you can click cells to select them. \textbf{Step 4}: Similarly, click \textbf{Select Destination Cells (Graphical)} to choose where the data should be written. \textbf{Step 5}: The \textit{Transfer Mapping} table at the bottom shows all defined source-to-destination cell pairs. Each row displays the source cell reference (e.g., D4), its current value, and the destination cell reference. \textbf{Step 6}: Click \textbf{Execute Transfer} to copy all mapped cells from source to destination. Use this tab for one-off transfers or custom cell mappings not covered by the standard mapping files.}
 \label{fig:logbutton}
 \end{figure}
 
+
+\newpage
 \subsection{Log Panel}
 
 Click the \textbf{Log} button in the header to show or hide the status log dock. The log panel is hidden by default on startup. When visible, it shows all transfer status, warnings, and debug output in real time.
@@ -704,6 +708,8 @@ The ``Copy full sheet'' option is \textbf{automatically hidden} for REFI, Budget
 \label{fig:mappingdetail}
 \end{figure}
 
+\clearpage  % Force new page to prevent overflow
+
 \subsubsection{Working with Mapping Card Controls}
 
 \begin{stepbox}
@@ -791,6 +797,8 @@ Click \textbf{$\oslash$ Ignore} on any mapping card to open the Ignore Rows dial
 \caption{Ignore Rows dialog for REFI CM $\rightarrow$ MZLZ Consolidated. Each rowMap entry shows Dest Row, Dest Column, Src Row(s), and Current Value. Check \textbf{Skip} to exclude a row from the next transfer. The filter box narrows the list. Status line shows ``0 rows ignored out of 136''.}
 \label{fig:ignorerows}
 \end{figure}
+
+\clearpage  % Force new page to prevent overflow
 
 \subsubsection{Using the Ignore Rows Dialog}
 
@@ -964,6 +972,8 @@ Fill All Months writes data for \textbf{all months January through a target mont
 \label{fig:fillall}
 \end{figure}
 
+
+\newpage
 \subsection{How it Works}
 
 \begin{enumerate}[leftmargin=*, itemsep=6pt]
@@ -1077,7 +1087,7 @@ When configuring an \textbf{Individual Transfer}, click \textbf{Select Source Ce
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.82\linewidth]{../../Pictures/Figure10.png}
-\caption{Visual Cell Selector dialog --- ``Select Source Cell''. The grid shows the loaded workbook data (Sheet1, columns A--N, rows 1--21). Click any cell to capture its reference. The Sheet, Column, and Row fields update automatically. The highlighted area shows existing data in the source file.}
+\caption{\textbf{Visual Cell Selector dialog} --- ``Select Source Cell'' mode. \textbf{How to use}: \textbf{Step 1}: At the top, use the \textbf{Sheet} dropdown to switch between different sheets in the loaded workbook (e.g., Sheet1, MZLZ Consolidated, TRAFFIC mott). \textbf{Step 2}: The grid displays the actual cell data from the Excel file --- rows 1--50 and columns A--Z are visible. Scroll horizontally or vertically to see more cells. \textbf{Step 3}: \textbf{Click any cell} in the grid to select it --- the cell highlights and the \textbf{Column} and \textbf{Row} fields below update automatically (e.g., Column: N, Row: 17). \textbf{Step 4}: The \textbf{``Selected:''} label shows the full cell reference in Excel notation (e.g., \texttt{Sheet1!N17}). \textbf{Step 5}: If you prefer, you can manually type the column letter and row number in the input fields instead of clicking. \textbf{Step 6}: Click \textbf{Apply} to confirm your selection and return to the Individual Transfer tab. The selected cell reference will appear in the Transfer Mapping table. \textbf{Tip}: The highlighted area shows existing data in the source file, making it easy to identify which cells contain the values you need to transfer.}
 \label{fig:cellselector}
 \end{figure}
 
@@ -1089,7 +1099,7 @@ The cell selector reads data from the already-loaded workbook. If the source or 
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.82\linewidth]{../../Pictures/Figure11.png}
-\caption{Individual Transfer tab with 105 cells mapped. The Transfer Mapping table lists source cells (D4, C4, I4, H4, F4, E4, G4) with their current values and destination cells. The \textbf{Execute Transfer} button becomes active once mappings are configured.}
+\caption{\textbf{Individual Transfer tab with 105 cells mapped} and ready for execution. The \textit{Transfer Mapping} table lists all configured cell-to-cell transfers. \textbf{Understanding the table}: Each row represents one cell transfer. The \textbf{Source Cell} column shows where data will be read from (e.g., D4, C4, I4, H4, F4, E4, G4). The \textbf{Current Value} column displays the actual data currently in that source cell (e.g., numbers, text, formulas). The \textbf{Destination Cell} column shows where the data will be written to in the destination file. \textbf{How to manage mappings}: Click the \textbf{+ Add Mapping} button to add more cell pairs. Select a row and click \textbf{Delete} to remove a mapping. Use \textbf{Clear All} to start over. Click \textbf{Import} to load mappings from a JSON file, or \textbf{Export} to save your current mappings for reuse. \textbf{Executing the transfer}: The \textbf{Execute Transfer} button (green, at the bottom) becomes active once at least one mapping is configured. Click it to copy all mapped cells from the source file to the destination file in one operation. A progress dialog shows the transfer status. \textbf{When to use this tab}: Use Individual Transfer for one-time data copies, custom cell mappings not covered by standard JSON mapping files, or when you need precise control over which specific cells are transferred.}
 \label{fig:transfermapping}
 \end{figure}
 
@@ -1322,6 +1332,13 @@ The \textbf{Hybrid Transfer} tab lets you assign individual months to either \te
 \includegraphics[width=0.92\linewidth]{../../Pictures/Figure21.png}
 \caption{\textbf{Transfer completion summary} showing the final results after an Execute All or Fill All Months operation completes. The summary displays: total mappings processed, successful transfers, failed transfers, total cells transferred, and execution time. Any warnings or errors are listed below with clickable links to jump to the relevant log entries. The \textbf{Close} button dismisses the dialog. A green toast notification also appears at the bottom-center of the application window confirming successful completion.}
 \label{fig:summary}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{../../Pictures/Figure22.png}
+\caption{\textbf{SAP Export Instructions} --- Click locations in SAP to export the monthly cost report. Navigate to the cost center report, click \textbf{Export} (spreadsheet icon), select \textbf{``Export to Excel''}, and save as \texttt{.xlsx} to the month folder (e.g., \texttt{L:/2025/03/}).}
+\label{fig:sapexport}
 \end{figure}
 
 \vspace{1cm}

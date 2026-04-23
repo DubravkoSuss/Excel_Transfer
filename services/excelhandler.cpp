@@ -72,9 +72,6 @@ double ExcelHandler::parseNumericString(const QString& val, bool* ok)
             // "1,234.56" -> remove commas
             cleaned.remove(',');
         }
-    } else if (lastComma != -1) {
-        // "1234,56" -> replace comma with dot
-        cleaned.replace(',', '.');
     }
     // If only dot exists ("1234.56"), it's already standard.
 
@@ -830,7 +827,7 @@ static QByteArray mergeSheetXml(const QByteArray& originalXml, const SheetData& 
 
     const QByteArray workingXml = originalXml;
 
-    // Linear byte scan  ” O(n) single pass through the XML.
+    // Linear byte scan — O(n) single pass through the XML.
     const QMap<QString, CellData>& changedCells = changes.cells;
     QByteArray output;
     output.reserve(workingXml.size() + changedCells.size() * 64);
@@ -925,6 +922,11 @@ static QByteArray mergeSheetXml(const QByteArray& originalXml, const SheetData& 
             if (!selfClosing) {
                 fullCellXml = workingXml.mid(cStart, cEnd - cStart);
             }
+            // Preserve shared formulas for ALL cells (dirty or not) if the original XML
+            // has t="shared". Dirty cells have cell.formula="" (cleared by setCellValue),
+            // but the original XML still has the shared formula group info. We must keep
+            // the <f> element intact and only update <v> — otherwise Excel reports
+            // "Removed Records: Shared formula" on open.
             const bool isSharedCell = !selfClosing &&
                                       (fullCellXml.contains("t=\"shared\"") ||
                                        fullCellXml.contains("t='shared'"));
@@ -1565,7 +1567,17 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
         } else {
             QByteArray merged = stripCellWatches(mergeSheetXml(originalXml, changesOnly));
 
-            // Deduplicate using regex (same pattern as diagnostic  ” guaranteed to catch all variants)
+            // [DIAGNOSTIC] Check if mergeSheetXml produced duplicates for the cells we just wrote
+            for (const QString& ref : changesOnly.cells.keys().mid(0, 10)) {
+                QByteArray needle = QString("r=\"%1\"").arg(ref).toUtf8();
+                int count = 0, searchPos = 0;
+                while ((searchPos = merged.indexOf(needle, searchPos)) != -1) { count++; searchPos += needle.size(); }
+                if (count > 1) qWarning() << "[MERGE DIAG]" << ref << "appears" << count << "times in merged XML";
+            }
+
+            // Deduplicate using regex (same pattern as diagnostic)
+            // This pass picks the LAST occurrence of any cell ref (the one mergeSheetXml wrote)
+            // and drops earlier ones (the original file's cells).
             {
                 // Match ONLY actual <c r="..."> cell elements, not formula text or cellWatch
                 QRegularExpression cellRe("(?<![A-Za-z])<c\\s[^>]*r=([\"'])([A-Z]+[0-9]+)\\1[^>]*(?:/>|>.*?</c>)",
@@ -1585,49 +1597,16 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
                     QString out;
                     out.reserve(input.size());
                     int lastPos = 0, dupes = 0;
-                    
-                    QMap<QString, QString> preservedFormulas;
-                    for (int i = 0; i < matches.size(); ++i) {
-                        const auto& cm = matches[i];
-                        if (lastIdx[cm.ref] != i) {
-                            int fStart = cm.full.indexOf("<f ");
-                            if (fStart == -1) fStart = cm.full.indexOf("<f>");
-                            if (fStart != -1) {
-                                int fEnd = cm.full.indexOf("</f>", fStart);
-                                if (fEnd != -1) {
-                                    preservedFormulas[cm.ref] = cm.full.mid(fStart, fEnd - fStart + 4);
-                                } else {
-                                    int fSelfClose = cm.full.indexOf("/>", fStart);
-                                    if (fSelfClose != -1) {
-                                        preservedFormulas[cm.ref] = cm.full.mid(fStart, fSelfClose - fStart + 2);
-                                    }
-                                }
-                            }
-                        }
-                    }
 
                     for (int i = 0; i < matches.size(); ++i) {
                         const auto& cm = matches[i];
                         out.append(input.mid(lastPos, cm.start - lastPos));
                         if (lastIdx[cm.ref] == i) {
-                            QString finalCell = cm.full;
-                            if (preservedFormulas.contains(cm.ref)) {
-                                int vStart = finalCell.indexOf("<v>");
-                                if (vStart != -1) {
-                                    finalCell.insert(vStart, preservedFormulas[cm.ref]);
-                                } else {
-                                    int cEnd = finalCell.lastIndexOf("</c>");
-                                    if (cEnd != -1) {
-                                        finalCell.insert(cEnd, preservedFormulas[cm.ref]);
-                                    } else {
-                                        int cSelfClose = finalCell.lastIndexOf("/>");
-                                        if (cSelfClose != -1) {
-                                            finalCell = finalCell.mid(0, cSelfClose) + ">" + preservedFormulas[cm.ref] + "</c>";
-                                        }
-                                    }
-                                }
-                            }
-                            out.append(finalCell);
+                            // Keep the last occurrence (our merged result).
+                            // We NO LONGER salvage formulas from earlier duplicates here.
+                            // If a formula was intentionally stripped by mergeSheetXml,
+                            // we must not re-inject it.
+                            out.append(cm.full);
                         } else {
                             dupes++;
                             qWarning() << "[DUP CELL REMOVED]" << cm.ref;
@@ -1636,7 +1615,7 @@ bool ExcelHandler::saveOpenXML(const QString& filePath, const WorkbookData& wb)
                     }
                     out.append(input.mid(lastPos));
                     if (dupes > 0) {
-                        qInfo() << "[DUP CELL] Removed" << dupes << "duplicates, salvaged" << preservedFormulas.size() << "formulas.";
+                        qInfo() << "[DUP CELL] Removed" << dupes << "duplicates.";
                         merged = out.toUtf8();
                     }
                 }
@@ -2363,7 +2342,7 @@ bool ExcelHandler::setCellValue(const QString& key, const QString& sheetName, in
     CellData& cell  = sheet.cells[cellRef];
     cell.row     = row;
     cell.col     = col;
-    cell.formula.clear();
+    cell.formula = QString(); // Clear any existing formula — this cell now holds a literal value
 
     if (value.typeId() == QMetaType::Double || value.typeId() == QMetaType::Float ||
         value.typeId() == QMetaType::Int    || value.typeId() == QMetaType::LongLong) {
@@ -2404,6 +2383,36 @@ bool ExcelHandler::setCellFormula(const QString& key, const QString& sheetName, 
 
     wb.modifiedSheets.insert(sheetName);
     wb.dirtyCells[sheetName].insert(cellRef);
+    return true;
+}
+
+bool ExcelHandler::deleteCellValue(const QString& key, const QString& sheetName, int row, int col)
+{
+    if (sheetName.trimmed().isEmpty() || !isValidCellAddress(row, col))
+        return false;
+    QWriteLocker locker(&m_lock);
+    if (!m_workbooks.contains(key))
+        return false;
+
+    WorkbookData& wb = m_workbooks[key];
+    SheetData& sheet = getSheet(key, sheetName);
+    QString cellRef  = buildCellRef(columnToLetter(col), row);
+
+    // Write a blank CellData (empty value, empty formula, empty dataType).
+    // saveOpenXML's changesOnly loop checks fullSheet.cells.contains(ref) —
+    // if we remove the cell it won't find it and will leave the original <c>
+    // element untouched.  By keeping a blank entry, mergeSheetXml emits a
+    // self-closing <c r="X"/> which Excel treats as an empty/deleted cell,
+    // equivalent to the user pressing Delete.
+    CellData& cell  = sheet.cells[cellRef];
+    cell.row        = row;
+    cell.col        = col;
+    cell.value.clear();
+    cell.formula.clear();
+    cell.dataType.clear();
+
+    wb.dirtyCells[sheetName].insert(cellRef);
+    wb.modifiedSheets.insert(sheetName);
     return true;
 }
 
@@ -2542,7 +2551,9 @@ int ExcelHandler::transferData(const QString& srcKey, const QString& srcSheet, c
         dCell.formula.clear();  // never copy source formula  ” raw value only
 
         if (isNum) {
-            if (divideBy1000) {
+            // Rows 12, 13, 16 are headcount rows — never divide or round by 1000
+            const bool isHeadcountRow = (destRows[i] == 12 || destRows[i] == 13 || destRows[i] == 16);
+            if (divideBy1000 && !isHeadcountRow) {
                 if (sourceFileType == "pax") {
                     const bool shouldDivide = (destRows[i] >= 5 && destRows[i] <= 7);
                     if (shouldDivide) {

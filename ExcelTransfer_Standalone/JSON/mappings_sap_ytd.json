@@ -158,8 +158,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "source_file_type":  "sap_ytd",
     "note":  "YTD SAP export - Report sheet column JG (July 2025: Full P\u0026L from Revenues through Costs, Opex, Depreciation, Financial result, Income tax, ZAIC, Net result, Deferred tax, Adjusted net + start of EUR/Departing PAX section up to ~row 232)",
@@ -326,8 +329,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "source_file_type":  "sap_ytd",
     "note":  "YTD SAP export - Report sheet column JG (July 2025: Full P\u0026L from Revenues through Costs, Opex, Depreciation, Financial result, Income tax, ZAIC, Net result, Deferred tax, Adjusted net + start of EUR/Departing PAX section up to ~row 232)",
@@ -493,8 +499,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "source_file_type":  "sap_ytd",
     "note":  "YTD SAP export - Report sheet column JG (July 2025: Full P\u0026L from Revenues through Costs, Opex, Depreciation, Financial result, Income tax, ZAIC, Net result, Deferred tax, Adjusted net + start of EUR/Departing PAX section up to ~row 232)",
@@ -662,8 +671,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "traffic_source_column":  "J",
     "traffic_dest_rows":  {"5": 17, "7": 32, "8": 78, "9": 84, "11": 132, "10": 159},
@@ -828,8 +840,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "source_file_type":  "sap_ytd",
     "note":  "YTD SAP export - Report sheet column JG (July 2025: Full P\u0026L from Revenues through Costs, Opex, Depreciation, Financial result, Income tax, ZAIC, Net result, Deferred tax, Adjusted net + start of EUR/Departing PAX section up to ~row 232)",
@@ -996,8 +1011,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "source_file_type":  "sap_ytd",
     "note":  "YTD SAP export - Report sheet column JG (July 2025: Full P\u0026L from Revenues through Costs, Opex, Depreciation, Financial result, Income tax, ZAIC, Net result, Deferred tax, Adjusted net + start of EUR/Departing PAX section up to ~row 232)",
@@ -1164,8 +1182,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "source_file_type":  "sap_ytd",
     "note":  "YTD SAP export - Report sheet column JG (July 2025: Full P\u0026L from Revenues through Costs, Opex, Depreciation, Financial result, Income tax, ZAIC, Net result, Deferred tax, Adjusted net + start of EUR/Departing PAX section up to ~row 232)",
@@ -1332,8 +1353,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "source_file_type":  "sap_ytd",
     "note":  "YTD SAP export - Report sheet column JG (July 2025: Full P\u0026L from Revenues through Costs, Opex, Depreciation, Financial result, Income tax, ZAIC, Net result, Deferred tax, Adjusted net + start of EUR/Departing PAX section up to ~row 232)",
@@ -1500,8 +1524,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "source_file_type":  "sap_ytd",
     "note":  "YTD SAP export - Report sheet column JG (July 2025: Full P\u0026L from Revenues through Costs, Opex, Depreciation, Financial result, Income tax, ZAIC, Net result, Deferred tax, Adjusted net + start of EUR/Departing PAX section up to ~row 232)",
@@ -1668,8 +1695,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "source_file_type":  "sap_ytd",
     "note":  "YTD SAP export - Report sheet column JG (July 2025: Full P\u0026L from Revenues through Costs, Opex, Depreciation, Financial result, Income tax, ZAIC, Net result, Deferred tax, Adjusted net + start of EUR/Departing PAX section up to ~row 232)",
@@ -1836,8 +1866,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "source_file_type":  "sap_ytd",
     "note":  "YTD SAP export - Report sheet column JG (July 2025: Full P\u0026L from Revenues through Costs, Opex, Depreciation, Financial result, Income tax, ZAIC, Net result, Deferred tax, Adjusted net + start of EUR/Departing PAX section up to ~row 232)",
@@ -2004,8 +2037,11 @@
       "208":  2564,
       "210":  2582,
       "212":  2583,
+      "214":  2584,
       "216":  2585,
-      "220":  2587
+      "218":  2586,
+      "220":  2587,
+      "222":  2588
     },
     "source_file_type":  "sap_ytd",
     "note":  "YTD SAP export - Report sheet column JG (July 2025: Full P\u0026L from Revenues through Costs, Opex, Depreciation, Financial result, Income tax, ZAIC, Net result, Deferred tax, Adjusted net + start of EUR/Departing PAX section up to ~row 232)",

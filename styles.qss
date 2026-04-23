@@ -154,7 +154,7 @@ QComboBox {
     font-size: 14px;
     background-color: white;
     color: #111827;
-    min-width: 120px;
+    min-width: 100px;
 }
 
 QComboBox:focus {
@@ -162,15 +162,50 @@ QComboBox:focus {
     outline: none;
 }
 
+QComboBox:hover {
+    border-color: #9CA3AF;
+}
+
 QComboBox::drop-down {
     border: none;
+    width: 30px;
 }
 
 QComboBox::down-arrow {
     image: url(:/icons/down_arrow.png);
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
 }
+
+/* Dropdown Popup List Styling */
+QComboBox QAbstractItemView {
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+    background-color: white;
+    outline: none;
+    padding: 4px;
+    selection-background-color: #EFF6FF;
+}
+
+QComboBox QAbstractItemView::item {
+    min-height: 36px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin: 2px 4px;
+    color: #374151;
+}
+
+QComboBox QAbstractItemView::item:hover {
+    background-color: #F3F4F6;
+    color: #1F2937;
+}
+
+QComboBox QAbstractItemView::item:selected {
+    background-color: #DBEAFE;
+    color: #1E40AF;
+    font-weight: 600;
+}
+
 
 /* --- SpinBox --- */
 QSpinBox {

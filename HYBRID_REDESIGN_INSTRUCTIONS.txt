@@ -1,0 +1,51 @@
+HYBRID TRANSFER TAB - LAYOUT SWAP INSTRUCTIONS
+
+CURRENT LAYOUT (WRONG):
+┌────────────────┬──────────────────────────────┐
+│ Row Mappings   │ Hybrid Transfer (Title)      │
+│ (Left Sidebar) │ Year/Month Selection         │
+│                │ Assigned Periods Table       │
+│ Mapping Cards  │ Execution Options            │
+│                │ Execute Button               │
+└────────────────┴──────────────────────────────┘
+
+DESIRED LAYOUT (LIKE EXCEL SEARCH):
+┌──────────────────┬────────────────────────────┐
+│ Config Panel     │ Assigned Periods Table     │
+│ (Left)           │ (Right)                    │
+│                  │                            │
+│ Year Selection   │ Year | Month | Type | ... │
+│ Month Checkboxes │ 2026 | Jan   | EA   | ... │
+│ Q1 Q2 Q3 Q4      │ 2026 | Feb   | RT   | ... │
+│ Add Button       │                            │
+│                  │ Row Mappings (Bottom)      │
+│ Execution Order  │ [Collapsible section]      │
+│ Execute Button   │                            │
+└──────────────────┴────────────────────────────┘
+
+CHANGES NEEDED IN hybridtransfertab.cpp:
+
+1. REMOVE the current setupMappingsSidebar() call from line ~23
+2. SWAP the order in the splitter:
+   - OLD: setupMappingsSidebar() → rightContent
+   - NEW: leftPanel (config) → rightPanel (table + mappings)
+
+3. LEFT PANEL should contain:
+   - Year dropdown
+   - Transfer Type dropdown  
+   - Month checkboxes grid
+   - Q1/Q2/Q3/Q4/All/None buttons
+   - "+ Add Selected Months" button
+   - Execution Order radio buttons
+   - "Execute Hybrid Transfer" button
+   - "Reset All" button
+   - Progress bar
+   - Status labels
+
+4. RIGHT PANEL should contain:
+   - "Assigned Periods" table (Year/Month/Type/Status)
+   - Up/Down/Remove/Clear All buttons
+   - Row Mappings section at BOTTOM (collapsible, max 300px height)
+
+The key is: Everything that was in "rightContent" moves to "leftPanel"
+And the table + mappings sidebar move to "rightPanel"
